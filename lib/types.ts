@@ -1,0 +1,108 @@
+import { FunnelStage } from './config/funnel-stages';
+
+export interface BlogConfig {
+  url?: string;
+  topic: string;
+  category: string;
+  funnelStage: FunnelStage;
+}
+
+export interface KeywordData {
+  primaryKeyword: string;
+  searchVolume?: number;
+  keywordDifficulty?: number;
+  secondaryKeywords: {
+    keyword: string;
+    volume?: number;
+    difficulty?: number;
+  }[];
+  longTailKeywords: string[];
+  peopleAlsoAsk: string[];
+  keywordGroups: Record<string, string[]>;
+}
+
+export interface SERPResult {
+  title: string;
+  url: string;
+  snippet: string;
+  wordCount?: number;
+  headings?: string[];
+}
+
+export interface SERPAnalysis {
+  results: SERPResult[];
+  avgWordCount: number;
+  contentGaps: string[];
+  searchIntent: string;
+  mustHaveSections: string[];
+  headingSuggestions: string[];
+}
+
+export interface SectionBrief {
+  id: string;
+  heading: string;
+  headingTag: 'h2' | 'h3';
+  targetKeywords: string[];
+  paaToAnswer?: string[];
+  wordCountTarget: number;
+  instructions: string;
+  infographicType:
+    | 'comparison'
+    | 'pros_cons'
+    | 'features'
+    | 'pricing'
+    | 'workflow'
+    | 'stats'
+    | 'none';
+}
+
+export interface ContentBrief {
+  blogTitle: string;
+  h1: string;
+  contentType: string;
+  targetWordCount: number;
+  sections: SectionBrief[];
+}
+
+export interface ResearchBrief {
+  productName: string;
+  oneLiner: string;
+  features: {
+    name: string;
+    description: string;
+    rating?: number;
+  }[];
+  pricing: {
+    plans: {
+      name: string;
+      price: string;
+      features: string[];
+    }[];
+    freeTrial: boolean;
+  };
+  pros: string[];
+  cons: string[];
+  targetAudience: string;
+  competitors: string[];
+  g2Rating?: number;
+  capterraRating?: number;
+  keyDifferentiators: string[];
+}
+
+export interface SEOCheck {
+  category: string;
+  name: string;
+  status: 'pass' | 'fail' | 'warn';
+  detail: string;
+}
+
+export interface SEOScore {
+  overall: number;
+  checks: SEOCheck[];
+  suggestions: string[];
+}
+
+export interface GenerationEvent {
+  event: string;
+  data: unknown;
+}

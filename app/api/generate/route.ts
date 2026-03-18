@@ -14,7 +14,7 @@ import { generateMetaTags } from '../../../lib/seo/meta-generator';
 import { generateSlug } from '../../../lib/seo/url-generator';
 import { searchWeb } from '../../../lib/jina';
 import { FunnelStage } from '../../../lib/config/funnel-stages';
-import { KeywordData, SERPAnalysis, ContentBrief, ResearchBrief } from '../../../lib/types';
+import { KeywordData, SERPAnalysis, ContentBrief, ResearchBrief, SEOScore } from '../../../lib/types';
 
 // Minimal fallback keyword data when discovery completely fails
 function fallbackKeywordData(topic: string): KeywordData {
@@ -39,6 +39,13 @@ function fallbackSERPAnalysis(topic: string): SERPAnalysis {
   };
 }
 
+// Default SEO score when scoring fails
+const DEFAULT_SEO_SCORE: SEOScore = {
+  overall: 0,
+  checks: [],
+  suggestions: ['SEO scoring failed — please retry'],
+};
+
 export async function POST(req: NextRequest) {
   const body = await req.json() as {
     url?: string;
@@ -58,6 +65,15 @@ export async function POST(req: NextRequest) {
 
   const stream = new ReadableStream({
     async start(controller) {
+      // ── Deduplication guard for controller.close() ──────────────────────
+      let controllerClosed = false;
+      const closeController = () => {
+        if (!controllerClosed) {
+          controllerClosed = true;
+          try { controller.close(); } catch { /* already closed */ }
+        }
+      };
+
       const send = (event: string, data: unknown) => {
         try {
           controller.enqueue(
@@ -68,10 +84,35 @@ export async function POST(req: NextRequest) {
         }
       };
 
+      // ── Shared state (let so safety timeout closure sees latest values) ──
       let keywordData: KeywordData = fallbackKeywordData(body.topic);
       let serpAnalysis: SERPAnalysis = fallbackSERPAnalysis(body.topic);
       let contentBrief: ContentBrief | null = null;
       let research: ResearchBrief | null = null;
+      // Post-processing accumulator — updated as each step succeeds
+      let safetySlug = '';
+      let safetyMeta: Record<string, unknown> = {};
+      let safetyHtml = '';
+      let safetySeoScore: SEOScore = DEFAULT_SEO_SCORE;
+
+      // ── Safety timeout at 270s (Vercel hard limit is 300s) ───────────────
+      const safetyTimeout = setTimeout(() => {
+        console.warn('[generate] Safety timeout fired after 270s');
+        send('status', {
+          phase: 'post',
+          message: 'Generation timed out — sending partial results',
+        });
+        send('score', safetySeoScore);
+        send('complete', {
+          html: safetyHtml || `<article class="blog-post"><h1>${body.topic}</h1><p>Content generation timed out. Please retry.</p></article>`,
+          score: safetySeoScore,
+          meta: safetyMeta,
+          slug: safetySlug || body.topic.toLowerCase().replace(/\s+/g, '-').slice(0, 60),
+          brief: contentBrief,
+          keywords: keywordData,
+        });
+        closeController();
+      }, 270_000);
 
       try {
         // ── PHASE 1: SEO RESEARCH ──────────────────────────────────────────
@@ -90,7 +131,7 @@ export async function POST(req: NextRequest) {
           send('status', {
             phase: 'seo',
             step: 'keywords',
-            message: `Keyword discovery partial failure — using topic as primary keyword`,
+            message: 'Keyword discovery partial failure — using topic as primary keyword',
           });
           console.warn('[generate] keyword phase error:', err);
         }
@@ -121,9 +162,11 @@ export async function POST(req: NextRequest) {
           research = await researchProduct(body.url ?? '', body.topic);
           send('research', research);
         } catch (err) {
-          send('status', { phase: 'research', message: 'Product research failed — continuing with available data' });
+          send('status', {
+            phase: 'research',
+            message: 'Product research failed — continuing with available data',
+          });
           console.warn('[generate] research phase error:', err);
-          // Create minimal research brief so generation can still continue
           research = {
             productName: body.topic,
             oneLiner: `A tool for ${body.topic}`,
@@ -196,42 +239,93 @@ export async function POST(req: NextRequest) {
         }
 
         // ── PHASE 4: POST-PROCESSING ───────────────────────────────────────
-        send('status', { phase: 'post', message: 'Injecting links and generating metadata...' });
-        const slug = generateSlug(keywordData.primaryKeyword);
-        const metaTags = generateMetaTags(contentBrief, keywordData, slug);
+        send('status', { phase: 'post', message: 'Starting post-processing...' });
 
-        const assembledHtml = assembleHTML(
-          contentBrief,
-          sections,
-          infographics,
-          keywordData,
-          metaTags as Record<string, unknown>,
-          research ?? undefined,
-          body.category
-        );
+        // Step 4a: URL slug
+        send('status', { phase: 'post', message: 'Generating URL slug...' });
+        try {
+          safetySlug = generateSlug(keywordData.primaryKeyword);
+        } catch (err) {
+          console.warn('[generate] slug generation failed:', err);
+          safetySlug = keywordData.primaryKeyword.toLowerCase().replace(/\s+/g, '-').slice(0, 60);
+        }
 
-        send('status', { phase: 'post', message: 'Scoring SEO...' });
-        const seoScore = scoreContent(assembledHtml, keywordData, {
-          title: metaTags.title,
-          description: metaTags.description,
-          slug,
-        });
+        // Step 4b: Meta tags
+        send('status', { phase: 'post', message: 'Generating meta tags...' });
+        try {
+          safetyMeta = generateMetaTags(contentBrief, keywordData, safetySlug) as Record<string, unknown>;
+        } catch (err) {
+          console.warn('[generate] meta generation failed:', err);
+          safetyMeta = {
+            title: contentBrief.h1,
+            description: `Everything you need to know about ${keywordData.primaryKeyword}.`,
+            keywords: keywordData.primaryKeyword,
+            slug: safetySlug,
+          };
+        }
 
-        send('score', seoScore);
+        // Step 4c: Assemble HTML
+        send('status', { phase: 'post', message: 'Assembling HTML...' });
+        try {
+          safetyHtml = assembleHTML(
+            contentBrief,
+            sections,
+            infographics,
+            keywordData,
+            safetyMeta,
+            research ?? undefined,
+            body.category
+          );
+        } catch (err) {
+          console.warn('[generate] assembleHTML failed:', err);
+          // Fallback: concatenate all section HTML with H1 header
+          const allSectionBlocks = Array.from(sections.entries())
+            .map(([id, html]) => `<section id="${id}">${html}</section>`)
+            .join('\n\n');
+          safetyHtml = `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8" /><title>${contentBrief.h1}</title></head>
+<body>
+<article class="blog-post">
+<h1>${contentBrief.h1}</h1>
+${allSectionBlocks}
+</article>
+</body>
+</html>`;
+        }
+
+        // Step 4d: SEO scoring
+        send('status', { phase: 'post', message: 'Running SEO scorer...' });
+        try {
+          const metaForScorer = safetyMeta as Record<string, string>;
+          safetySeoScore = scoreContent(safetyHtml, keywordData, {
+            title: metaForScorer.title ?? contentBrief.h1,
+            description: metaForScorer.description ?? '',
+            slug: safetySlug,
+          });
+        } catch (err) {
+          console.warn('[generate] SEO scoring failed:', err);
+          safetySeoScore = DEFAULT_SEO_SCORE;
+        }
+
+        // Step 4e: Emit score + complete
+        send('score', safetySeoScore);
         send('complete', {
-          html: assembledHtml,
-          score: seoScore,
-          meta: metaTags,
-          slug,
+          html: safetyHtml,
+          score: safetySeoScore,
+          meta: safetyMeta,
+          slug: safetySlug,
           brief: contentBrief,
           keywords: keywordData,
         });
+
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : 'Generation failed';
         console.error('[generate] Fatal error:', error);
         send('error', { message });
       } finally {
-        try { controller.close(); } catch { /* already closed */ }
+        clearTimeout(safetyTimeout);
+        closeController();
       }
     },
   });

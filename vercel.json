@@ -1,0 +1,19 @@
+{
+  "functions": {
+    "app/api/generate/route.ts": {
+      "maxDuration": 300
+    },
+    "app/api/seo/keywords/route.ts": {
+      "maxDuration": 120
+    },
+    "app/api/seo/serp/route.ts": {
+      "maxDuration": 120
+    },
+    "app/api/research/route.ts": {
+      "maxDuration": 120
+    },
+    "app/api/infographics/generate/route.ts": {
+      "maxDuration": 60
+    }
+  }
+}

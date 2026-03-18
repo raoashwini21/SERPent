@@ -104,12 +104,10 @@ function checkKeywordDensity(html: string, primaryKeyword: string): SEOCheck {
   }
   const kwWords = normalizeKw(primaryKeyword).split(/\s+/);
   const text = plain.toLowerCase();
-  let count = 0;
-  let pos = 0;
   const pattern = kwWords.join('\\s+');
   const regex = new RegExp(pattern, 'gi');
   const matches = text.match(regex);
-  count = matches ? matches.length : 0;
+  const count = matches ? matches.length : 0;
 
   const density = (count / totalWords) * 100;
   const inRange = density >= 1 && density <= 2;

@@ -3,7 +3,7 @@ import { SectionBrief, ResearchBrief, KeywordData } from '../types';
 export function buildProsConsPrompt(
   section: SectionBrief,
   research: ResearchBrief,
-  keywords: KeywordData
+_keywords: KeywordData
 ): string {
   const ratingsNote =
     research.g2Rating || research.capterraRating

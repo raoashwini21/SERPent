@@ -50,8 +50,13 @@ export default function NewBlogPage() {
   const [metaData, setMetaData] = useState<Record<string, unknown>>({});
   const [slug, setSlug] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
+  const [postProcessingWarning, setPostProcessingWarning] = useState(false);
   const [countdown, setCountdown] = useState(2);
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Refs so stream-close handler can read latest values without stale closures
+  const completeReceivedRef = useRef(false);
+  const sectionsRef = useRef<Record<string, SectionData>>({});
+  const contentBriefRef = useRef<{ h1: string } | null>(null);
 
   // Auto-continue after checkpoint
   useEffect(() => {
@@ -88,10 +93,13 @@ export default function NewBlogPage() {
       case 'serp':
         setSerpAnalysis(data as unknown as _SERPAnalysis);
         break;
-      case 'brief':
-        setContentBrief(data as unknown as ContentBrief);
+      case 'brief': {
+        const brief = data as unknown as ContentBrief;
+        contentBriefRef.current = { h1: brief.h1 };
+        setContentBrief(brief);
         setGenState('checkpoint');
         break;
+      }
       case 'checkpoint':
         // auto-continue handled by useEffect
         break;
@@ -101,10 +109,9 @@ export default function NewBlogPage() {
         break;
       case 'section': {
         const sd = d as { id: string; html: string; infographic: string | null };
-        setSections((prev) => ({
-          ...prev,
-          [sd.id]: { html: sd.html, infographic: sd.infographic ?? null },
-        }));
+        const sectionEntry = { html: sd.html, infographic: sd.infographic ?? null };
+        sectionsRef.current = { ...sectionsRef.current, [sd.id]: sectionEntry };
+        setSections((prev) => ({ ...prev, [sd.id]: sectionEntry }));
         break;
       }
       case 'score':
@@ -117,6 +124,7 @@ export default function NewBlogPage() {
           meta: Record<string, unknown>;
           slug: string;
         };
+        completeReceivedRef.current = true;
         setFinalHtml(cd.html);
         setMetaData(cd.meta);
         setSlug(cd.slug);
@@ -147,6 +155,10 @@ export default function NewBlogPage() {
     setMetaData({});
     setSlug('');
     setErrorMsg('');
+    setPostProcessingWarning(false);
+    completeReceivedRef.current = false;
+    sectionsRef.current = {};
+    contentBriefRef.current = null;
 
     try {
       const res = await fetch('/api/generate', {
@@ -190,6 +202,22 @@ export default function NewBlogPage() {
             }
           }
         }
+      }
+
+      // Stream closed — if complete event was never received, recover gracefully
+      if (!completeReceivedRef.current) {
+        // Cast needed: TS treats post-while(true) code as potentially unreachable
+        const briefRef = contentBriefRef as { current: { h1: string } | null };
+        const briefH1 = briefRef.current ? briefRef.current.h1 : '';
+        const sectionBlocks = Object.entries(sectionsRef.current)
+          .map(([id, s]) => `<section id="${id}">${s.html}</section>`)
+          .join('\n');
+        const fallbackHtml = briefH1
+          ? `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8" /><title>${briefH1}</title></head><body><article class="blog-post"><h1>${briefH1}</h1>${sectionBlocks}</article></body></html>`
+          : '';
+        setFinalHtml(fallbackHtml);
+        setPostProcessingWarning(true);
+        setGenState('complete');
       }
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Connection failed');
@@ -235,6 +263,18 @@ export default function NewBlogPage() {
 
           {genState === 'complete' && (
             <div className="space-y-4">
+              {postProcessingWarning && (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+                  <p className="text-sm font-semibold text-amber-700 mb-1">
+                    Post-processing timed out
+                  </p>
+                  <p className="text-xs text-amber-600">
+                    Your blog content is ready but SEO scoring may be incomplete.
+                    You can still export the HTML below.
+                  </p>
+                </div>
+              )}
+
               {seoScore && <SeoScoreDashboard score={seoScore} />}
 
               {/* Keyword summary */}

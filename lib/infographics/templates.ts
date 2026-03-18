@@ -13,14 +13,17 @@ DATA:
 {data}
 
 DESIGN REQUIREMENTS:
-- Dark navy (#1A1A2E) background rect with rounded corners (rx="16")
+- White (#FFFFFF) background rect with rounded corners (rx="16") and border stroke="#E5E7EB" stroke-width="1"
 - viewBox="0 0 800 {auto-height}" — calculate height based on number of rows
 - Two columns: left = {productName} (gray header #6B7280), right = SalesRobot (purple header #6C5CE7)
-- Feature rows with alternating row backgrounds (#1E1E3A and #1A1A2E)
+- Feature rows with alternating row backgrounds (#F9FAFB and #F3F4F6), each row has stroke="#E5E7EB" stroke-width="1"
+- Each row group must have a clipPath so text never bleeds outside the row rectangle
 - For each feature cell: green check circle (#22C55E) for wins, red X circle (#EF4444) for losses, amber dash (#F59E0B) for partial/neutral
-- White text (#FFFFFF) everywhere
-- Bottom CTA row: full-width purple (#6C5CE7) background, white "Try SalesRobot Free →" text centered
-- Header row: bold white text, feature names in first column in gray (#9CA3AF)
+- Row text (#1F2937 dark gray), font-size 13px, text-anchor="start", truncated to max 60 chars with ...
+- Feature names in first column: #374151, font-size 13px, bold
+- Column headers: bold, {productName} header in #6B7280, SalesRobot header in #6C5CE7
+- Bottom CTA row: full-width purple (#6C5CE7) background, white "Try SalesRobot Free →" text centered, font-size 14
+- Use clipPath on every row group to prevent text overflow
 
 {svgRules}`,
     extractData: (section, research, keywords) => {
@@ -42,16 +45,20 @@ DATA:
 {data}
 
 DESIGN REQUIREMENTS:
-- Dark navy (#1A1A2E) background rect with rounded corners (rx="16")
+- White (#FFFFFF) background rect with rounded corners (rx="16") and border stroke="#E5E7EB" stroke-width="1"
 - viewBox="0 0 800 {auto-height}"
-- Two equal columns split by a vertical divider (#2D2D50)
-- Left column: green (#22C55E) header bar with white "✓ Pros" text, each pro as a row with a small green check circle
-- Right column: red (#EF4444) header bar with white "✗ Cons" text, each con as a row with a small red X circle
-- White (#FFFFFF) item text, font-size 14, Inter
-- Subtle row separators (#252547)
+- Two equal columns split by a vertical divider (#E5E7EB)
+- Left column: green (#22C55E) header bar with white "✓ Pros" text
+  - Each pro row: light green-tinted background (#F0FDF4), small green check circle, text in #1F2937
+  - Each row has a clipPath — text max 60 chars, font-size 12px
+- Right column: red (#EF4444) header bar with white "✗ Cons" text
+  - Each con row: light red-tinted background (#FEF2F2), small red X circle, text in #1F2937
+  - Each row has a clipPath — text max 60 chars, font-size 12px
+- Subtle row separators stroke="#E5E7EB"
+- Use text-anchor="start" and explicit x positioning for all item text
 
 {svgRules}`,
-    extractData: (section, research, keywords) => {
+    extractData: (_section, research, keywords) => {
       return `Product: ${research.productName}\nKeyword: ${keywords.primaryKeyword}\nPros:\n${research.pros.slice(0, 5).map((p) => `- ${p}`).join('\n')}\nCons:\n${research.cons.slice(0, 4).map((c) => `- ${c}`).join('\n')}`;
     },
   },
@@ -63,17 +70,19 @@ DATA:
 {data}
 
 DESIGN REQUIREMENTS:
-- Dark navy (#1A1A2E) background rect with rounded corners (rx="16")
+- White (#FFFFFF) background rect with rounded corners (rx="16") and border stroke="#E5E7EB" stroke-width="1"
 - viewBox="0 0 800 {auto-height}"
 - Grid of feature cards (2 columns), each card:
-  - Slightly lighter background (#252547), rounded corners (rx="8")
-  - Feature name: white, bold, font-size 15
-  - Description: gray (#9CA3AF), font-size 13, truncated if needed
-  - Rating bar below description: track background (#2D2D50), fill (#6C5CE7), width proportional to rating/5
-- Purple (#6C5CE7) small icon/dot before each feature name
+  - Light gray background (#F3F4F6), rounded corners (rx="8"), border stroke="#E5E7EB" stroke-width="1"
+  - Each card MUST have a <clipPath> applied (clip-path="url(#clip-card-N)") matching the card rect exactly
+  - Feature name: #111827 near-black, bold, font-size 14px
+  - Purple dot (#6C5CE7) before each feature name
+  - Description: #6B7280 gray, font-size 12px, max 60 chars per line, truncated with ..., text-anchor="start"
+  - Rating bar below description: track background (#E5E7EB), fill (#6C5CE7), width proportional to rating/5
+- All text stays within clipPath bounds — never outside the card rectangle
 
 {svgRules}`,
-    extractData: (section, research, keywords) => {
+    extractData: (_section, research, keywords) => {
       const items = research.features.slice(0, 6).map(
         (f) => `${f.name} (rating: ${f.rating ?? 4}/5): ${f.description.slice(0, 60)}`
       );
@@ -88,18 +97,20 @@ DATA:
 {data}
 
 DESIGN REQUIREMENTS:
-- Dark navy (#1A1A2E) background rect with rounded corners (rx="16")
+- White (#FFFFFF) background rect with rounded corners (rx="16") and border stroke="#E5E7EB" stroke-width="1"
 - viewBox="0 0 800 {auto-height}"
 - Horizontal row of pricing cards (one per plan)
-- Each card: dark background (#1E1E3A), rounded corners (rx="12")
-- Plan name: white bold, font-size 16
-- Price: large white text, font-size 28, bold; billing period in gray
-- Feature list: small gray (#9CA3AF) text with white bullet dots
-- SalesRobot / best-value plan: purple border (#6C5CE7), "Best Value" badge at top-right in purple
-- Free trial note at the bottom: cyan (#00D2FF) text if applicable
+- Each card: light gray background (#F3F4F6), rounded corners (rx="12"), border stroke="#E5E7EB" stroke-width="1"
+- Each card MUST have a <clipPath> (clip-path="url(#clip-plan-N)") matching its rect exactly
+- Plan name: #111827 bold, font-size 15px
+- Price: large #111827 text, font-size 28px, bold; billing period in #6B7280 gray, font-size 12px
+- Feature list: #6B7280 gray, font-size 12px, with #6C5CE7 purple bullet dots; max 60 chars per line
+- SalesRobot / best-value plan: purple border (#6C5CE7) stroke-width="2", "Best Value" badge in purple
+- Free trial note: #6C5CE7 purple text, font-size 12px
+- Text stays within each card's clipPath — no overflow
 
 {svgRules}`,
-    extractData: (section, research, keywords) => {
+    extractData: (_section, research, keywords) => {
       const plans = research.pricing.plans
         .slice(0, 3)
         .map((p) => `${p.name}: ${p.price} — ${p.features.slice(0, 3).join(', ')}`);
@@ -114,13 +125,15 @@ DATA:
 {data}
 
 DESIGN REQUIREMENTS:
-- Dark navy (#1A1A2E) background rect with rounded corners (rx="16")
+- White (#FFFFFF) background rect with rounded corners (rx="16") and border stroke="#E5E7EB" stroke-width="1"
 - viewBox="0 0 800 200"
 - Horizontal flow: 4-5 connected step nodes
-- Each node: rounded rect, purple (#6C5CE7) for main steps, cyan (#00D2FF) for key highlight step
-- White text labels in each node, font-size 13, bold
-- Connector lines between nodes: gray (#6B7280), 2px stroke, with arrowhead
-- Step numbers (1, 2, 3…) in small circles above each node
+- Each node: rounded rect with light gray (#F3F4F6) fill and stroke="#E5E7EB" stroke-width="1"
+- Main step nodes: purple (#6C5CE7) fill with white text; key highlight step: #00D2FF cyan fill with white text
+- Step label text: white, font-size 12px, bold, text-anchor="middle", max 20 chars per line
+- Each node has a clipPath so label text never overflows the node rectangle
+- Connector lines between nodes: #9CA3AF gray, 2px stroke, with arrowhead marker
+- Step numbers (1, 2, 3…): small #6C5CE7 purple circles above each node with white text, font-size 11px
 
 {svgRules}`,
     extractData: (section, research, keywords) => {
@@ -140,12 +153,14 @@ DATA:
 {data}
 
 DESIGN REQUIREMENTS:
-- Dark navy (#1A1A2E) background rect with rounded corners (rx="16")
+- White (#FFFFFF) background rect with rounded corners (rx="16") and border stroke="#E5E7EB" stroke-width="1"
 - viewBox="0 0 800 160"
-- Horizontal row of 4 stat cards, evenly spaced
-- Each card: no border, large number in white (font-size 36, bold), label below in cyan (#00D2FF), font-size 13
-- Thin vertical dividers (#2D2D50) between cards
-- Optional: subtle purple (#6C5CE7) glow or accent under each number
+- Horizontal row of 4 stat cards, evenly spaced, no outer card borders — just the main border
+- Each stat: large number in #111827 near-black (font-size 36px, bold), label below in #6C5CE7 purple (font-size 13px)
+- Thin vertical dividers stroke="#E5E7EB" between each stat
+- Subtle purple (#6C5CE7) underline accent (2px rect) below each large number
+- All text centered within its stat column using text-anchor="middle"
+- Each stat column has a clipPath to prevent any text overflow
 
 {svgRules}`,
     extractData: (_section, research, keywords) => {

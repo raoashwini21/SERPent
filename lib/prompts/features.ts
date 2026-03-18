@@ -3,7 +3,7 @@ import { SectionBrief, ResearchBrief, KeywordData } from '../types';
 export function buildFeaturesPrompt(
   section: SectionBrief,
   research: ResearchBrief,
-  keywords: KeywordData
+_keywords: KeywordData
 ): string {
   const featuresText = research.features
     .slice(0, 6)

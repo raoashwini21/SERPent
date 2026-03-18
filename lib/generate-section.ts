@@ -15,7 +15,7 @@ import { buildRefinerPrompt } from './prompts/refiner';
 function buildGenericSectionPrompt(
   section: SectionBrief,
   research: ResearchBrief,
-  keywords: KeywordData
+  _keywords: KeywordData
 ): string {
   return `Write the "${section.heading}" section for a blog about ${research.productName}.
 

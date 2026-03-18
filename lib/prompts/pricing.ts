@@ -3,7 +3,7 @@ import { SectionBrief, ResearchBrief, KeywordData } from '../types';
 export function buildPricingPrompt(
   section: SectionBrief,
   research: ResearchBrief,
-  keywords: KeywordData
+_keywords: KeywordData
 ): string {
   const plansText = research.pricing.plans
     .map(

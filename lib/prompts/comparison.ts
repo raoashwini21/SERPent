@@ -3,7 +3,7 @@ import { SectionBrief, ResearchBrief, KeywordData } from '../types';
 export function buildComparisonPrompt(
   section: SectionBrief,
   research: ResearchBrief,
-  keywords: KeywordData
+_keywords: KeywordData
 ): string {
   const differentiators = research.keyDifferentiators.slice(0, 4).join(', ');
 

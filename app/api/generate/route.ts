@@ -5,6 +5,9 @@ import { analyzeSERP } from '../../../lib/seo/serp-analyzer';
 import { generateContentBrief } from '../../../lib/seo/content-brief';
 import { researchProduct } from '../../../lib/research';
 import { generateSection } from '../../../lib/generate-section';
+import { generateInfographic } from '../../../lib/infographics/generator';
+import { validateSVG } from '../../../lib/infographics/validator';
+import { wrapInFigure } from '../../../lib/infographics/embedder';
 import { assembleHTML } from '../../../lib/assembler';
 import { scoreContent } from '../../../lib/seo/content-scorer';
 import { generateMetaTags } from '../../../lib/seo/meta-generator';
@@ -76,16 +79,34 @@ export async function POST(req: NextRequest) {
             message: `Writing: ${section.heading}...`,
           });
 
-          const sectionHtml = await generateSection(
-            section,
-            contentBrief,
-            research,
-            keywordData
-          );
-          sections.set(section.id, sectionHtml);
-          infographics.set(section.id, null); // Phase 5 adds real infographics
+          const [sectionHtml, infographicSvg] = await Promise.all([
+            generateSection(section, contentBrief, research, keywordData),
+            section.infographicType !== 'none'
+              ? generateInfographic(section.infographicType, section, research, keywordData)
+              : Promise.resolve(null),
+          ]);
 
-          send('section', { id: section.id, heading: section.heading, html: sectionHtml });
+          let figureHtml: string | null = null;
+          if (infographicSvg) {
+            const validation = validateSVG(infographicSvg);
+            if (validation.valid) {
+              figureHtml = wrapInFigure(
+                infographicSvg,
+                keywordData.primaryKeyword,
+                section.heading
+              );
+            }
+          }
+
+          sections.set(section.id, sectionHtml);
+          infographics.set(section.id, figureHtml);
+
+          send('section', {
+            id: section.id,
+            heading: section.heading,
+            html: sectionHtml,
+            infographic: figureHtml,
+          });
         }
 
         // ── PHASE 4: POST-PROCESSING ───────────────────────────────────────

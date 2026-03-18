@@ -1,6 +1,33 @@
 import Anthropic from '@anthropic-ai/sdk';
 
 const MODEL = 'claude-sonnet-4-20250514';
+const MAX_RETRIES = 3;
+const RETRY_DELAYS = [1000, 2000, 4000];
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function callClaudeOnce(
+  client: Anthropic,
+  systemPrompt: string,
+  userMessage: string,
+  maxTokens: number
+): Promise<string> {
+  const response = await client.messages.create({
+    model: MODEL,
+    max_tokens: maxTokens,
+    system: systemPrompt,
+    messages: [{ role: 'user', content: userMessage }],
+  });
+
+  const content = response.content[0];
+  if (!content || content.type !== 'text') {
+    throw new Error('Unexpected response format from Claude API: no text content returned');
+  }
+
+  return content.text;
+}
 
 export async function callClaude(
   systemPrompt: string,
@@ -13,30 +40,27 @@ export async function callClaude(
   }
 
   const client = new Anthropic({ apiKey });
+  let lastError: Error = new Error('Unknown error');
 
-  try {
-    const response = await client.messages.create({
-      model: MODEL,
-      max_tokens: maxTokens,
-      system: systemPrompt,
-      messages: [
-        {
-          role: 'user',
-          content: userMessage,
-        },
-      ],
-    });
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      return await callClaudeOnce(client, systemPrompt, userMessage, maxTokens);
+    } catch (error) {
+      if (error instanceof Anthropic.APIError) {
+        // Don't retry on 4xx errors (except 429 rate limit)
+        if (error.status >= 400 && error.status < 500 && error.status !== 429) {
+          throw new Error(`Claude API error (${error.status}): ${error.message}`);
+        }
+        lastError = new Error(`Claude API error (${error.status}): ${error.message}`);
+      } else {
+        lastError = error instanceof Error ? error : new Error(String(error));
+      }
 
-    const content = response.content[0];
-    if (!content || content.type !== 'text') {
-      throw new Error('Unexpected response format from Claude API: no text content returned');
+      if (attempt < MAX_RETRIES) {
+        await sleep(RETRY_DELAYS[attempt]);
+      }
     }
-
-    return content.text;
-  } catch (error) {
-    if (error instanceof Anthropic.APIError) {
-      throw new Error(`Claude API error (${error.status}): ${error.message}`);
-    }
-    throw error;
   }
+
+  throw new Error(`Claude API failed after ${MAX_RETRIES + 1} attempts: ${lastError.message}`);
 }

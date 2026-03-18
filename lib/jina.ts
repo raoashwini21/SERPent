@@ -1,6 +1,6 @@
 const JINA_HEADERS = {
   Accept: 'text/markdown',
-  'User-Agent': 'Mozilla/5.0',
+  'User-Agent': 'Mozilla/5.0 (compatible; SalesRobotBlogBot/1.0)',
 };
 
 const TIMEOUT_MS = 10000;
@@ -16,17 +16,18 @@ export async function scrapeUrl(url: string): Promise<string> {
     });
 
     if (!response.ok) {
-      throw new Error(`Jina Reader returned status ${response.status} for URL: ${url}`);
+      console.warn(`[Jina Reader] Status ${response.status} for URL: ${url}`);
+      return '';
     }
 
     return await response.text();
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error(`Jina Reader timed out after ${TIMEOUT_MS}ms for URL: ${url}`);
+      console.warn(`[Jina Reader] Timed out after ${TIMEOUT_MS}ms for URL: ${url}`);
+      return '';
     }
-    throw new Error(
-      `Failed to scrape URL "${url}": ${error instanceof Error ? error.message : String(error)}`
-    );
+    console.warn(`[Jina Reader] Failed for "${url}": ${error instanceof Error ? error.message : String(error)}`);
+    return '';
   } finally {
     clearTimeout(timer);
   }
@@ -43,17 +44,18 @@ export async function searchWeb(query: string): Promise<string> {
     });
 
     if (!response.ok) {
-      throw new Error(`Jina Search returned status ${response.status} for query: "${query}"`);
+      console.warn(`[Jina Search] Status ${response.status} for query: "${query}"`);
+      return '';
     }
 
     return await response.text();
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error(`Jina Search timed out after ${TIMEOUT_MS}ms for query: "${query}"`);
+      console.warn(`[Jina Search] Timed out after ${TIMEOUT_MS}ms for query: "${query}"`);
+      return '';
     }
-    throw new Error(
-      `Failed to search web for "${query}": ${error instanceof Error ? error.message : String(error)}`
-    );
+    console.warn(`[Jina Search] Failed for "${query}": ${error instanceof Error ? error.message : String(error)}`);
+    return '';
   } finally {
     clearTimeout(timer);
   }

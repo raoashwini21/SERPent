@@ -14,6 +14,30 @@ import { generateMetaTags } from '../../../lib/seo/meta-generator';
 import { generateSlug } from '../../../lib/seo/url-generator';
 import { searchWeb } from '../../../lib/jina';
 import { FunnelStage } from '../../../lib/config/funnel-stages';
+import { KeywordData, SERPAnalysis, ContentBrief, ResearchBrief } from '../../../lib/types';
+
+// Minimal fallback keyword data when discovery completely fails
+function fallbackKeywordData(topic: string): KeywordData {
+  return {
+    primaryKeyword: topic,
+    secondaryKeywords: [],
+    longTailKeywords: [],
+    peopleAlsoAsk: [],
+    keywordGroups: { [topic]: [topic] },
+  };
+}
+
+// Minimal fallback SERP analysis
+function fallbackSERPAnalysis(topic: string): SERPAnalysis {
+  return {
+    results: [],
+    avgWordCount: 2000,
+    contentGaps: [],
+    searchIntent: 'informational',
+    mustHaveSections: ['intro', 'body_sections', 'faq', 'conclusion'],
+    headingSuggestions: [`What is ${topic}?`, `How does ${topic} work?`],
+  };
+}
 
 export async function POST(req: NextRequest) {
   const body = await req.json() as {
@@ -23,50 +47,96 @@ export async function POST(req: NextRequest) {
     funnelStage: FunnelStage;
   };
 
+  if (!body.topic || !body.category || !body.funnelStage) {
+    return new Response(
+      JSON.stringify({ error: 'topic, category, and funnelStage are required' }),
+      { status: 400, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream({
     async start(controller) {
       const send = (event: string, data: unknown) => {
-        controller.enqueue(
-          encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
-        );
+        try {
+          controller.enqueue(
+            encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
+          );
+        } catch {
+          // controller may already be closed
+        }
       };
+
+      let keywordData: KeywordData = fallbackKeywordData(body.topic);
+      let serpAnalysis: SERPAnalysis = fallbackSERPAnalysis(body.topic);
+      let contentBrief: ContentBrief | null = null;
+      let research: ResearchBrief | null = null;
 
       try {
         // ── PHASE 1: SEO RESEARCH ──────────────────────────────────────────
         send('status', { phase: 'seo', step: 'keywords', message: 'Discovering keywords...' });
 
-        const allKeywords = await discoverKeywords(body.topic, body.category);
-        send('status', {
-          phase: 'seo',
-          step: 'keywords',
-          message: `Found ${allKeywords.length} keywords`,
-        });
+        try {
+          const allKeywords = await discoverKeywords(body.topic, body.category);
+          send('status', {
+            phase: 'seo',
+            step: 'keywords',
+            message: `Found ${allKeywords.length} keywords`,
+          });
+          const serpContent = await searchWeb(body.topic);
+          keywordData = await estimateKeywordMetrics(allKeywords, serpContent);
+        } catch (err) {
+          send('status', {
+            phase: 'seo',
+            step: 'keywords',
+            message: `Keyword discovery partial failure — using topic as primary keyword`,
+          });
+          console.warn('[generate] keyword phase error:', err);
+        }
 
-        const serpContent = await searchWeb(body.topic);
-        const keywordData = await estimateKeywordMetrics(allKeywords, serpContent);
         send('keywords', keywordData);
 
         send('status', { phase: 'seo', step: 'serp', message: 'Analyzing competitors...' });
-        const serpAnalysis = await analyzeSERP(keywordData.primaryKeyword);
+        try {
+          serpAnalysis = await analyzeSERP(keywordData.primaryKeyword);
+        } catch (err) {
+          send('status', {
+            phase: 'seo',
+            step: 'serp',
+            message: 'SERP analysis skipped — using defaults',
+          });
+          console.warn('[generate] SERP phase error:', err);
+        }
         send('serp', serpAnalysis);
 
         send('status', { phase: 'seo', step: 'brief', message: 'Building content outline...' });
-        const contentBrief = await generateContentBrief(
-          keywordData,
-          serpAnalysis,
-          body.funnelStage
-        );
+        contentBrief = await generateContentBrief(keywordData, serpAnalysis, body.funnelStage);
         send('brief', contentBrief);
-
-        // Checkpoint: frontend can show the outline for review
         send('checkpoint', { type: 'outline_review', brief: contentBrief });
 
         // ── PHASE 2: PRODUCT RESEARCH ──────────────────────────────────────
         send('status', { phase: 'research', message: 'Researching product...' });
-        const research = await researchProduct(body.url ?? '', body.topic);
-        send('research', research);
+        try {
+          research = await researchProduct(body.url ?? '', body.topic);
+          send('research', research);
+        } catch (err) {
+          send('status', { phase: 'research', message: 'Product research failed — continuing with available data' });
+          console.warn('[generate] research phase error:', err);
+          // Create minimal research brief so generation can still continue
+          research = {
+            productName: body.topic,
+            oneLiner: `A tool for ${body.topic}`,
+            features: [],
+            pricing: { plans: [], freeTrial: false },
+            pros: [],
+            cons: [],
+            targetAudience: 'sales professionals',
+            competitors: [],
+            keyDifferentiators: [],
+          };
+          send('research', research);
+        }
 
         // ── PHASE 3: CONTENT GENERATION ───────────────────────────────────
         const sections = new Map<string, string>();
@@ -79,23 +149,39 @@ export async function POST(req: NextRequest) {
             message: `Writing: ${section.heading}...`,
           });
 
-          const [sectionHtml, infographicSvg] = await Promise.all([
-            generateSection(section, contentBrief, research, keywordData),
-            section.infographicType !== 'none'
-              ? generateInfographic(section.infographicType, section, research, keywordData)
-              : Promise.resolve(null),
-          ]);
-
+          let sectionHtml = '';
           let figureHtml: string | null = null;
-          if (infographicSvg) {
-            const validation = validateSVG(infographicSvg);
-            if (validation.valid) {
-              figureHtml = wrapInFigure(
-                infographicSvg,
-                keywordData.primaryKeyword,
-                section.heading
-              );
+
+          try {
+            const [generatedHtml, infographicSvg] = await Promise.all([
+              generateSection(section, contentBrief, research!, keywordData),
+              section.infographicType !== 'none'
+                ? generateInfographic(section.infographicType, section, research!, keywordData).catch(() => null)
+                : Promise.resolve(null),
+            ]);
+
+            sectionHtml = generatedHtml;
+
+            if (infographicSvg) {
+              const validation = validateSVG(infographicSvg);
+              if (validation.valid) {
+                figureHtml = wrapInFigure(
+                  infographicSvg,
+                  keywordData.primaryKeyword,
+                  section.heading
+                );
+              } else {
+                console.warn(`[generate] SVG invalid for section ${section.id}:`, validation.errors);
+              }
             }
+          } catch (err) {
+            console.warn(`[generate] Section "${section.id}" failed:`, err);
+            send('status', {
+              phase: 'generate',
+              section: section.id,
+              message: `Warning: section "${section.heading}" failed — skipping`,
+            });
+            sectionHtml = `<p><em>This section could not be generated.</em></p>`;
           }
 
           sections.set(section.id, sectionHtml);
@@ -110,7 +196,7 @@ export async function POST(req: NextRequest) {
         }
 
         // ── PHASE 4: POST-PROCESSING ───────────────────────────────────────
-        send('status', { phase: 'post', message: 'Generating metadata...' });
+        send('status', { phase: 'post', message: 'Injecting links and generating metadata...' });
         const slug = generateSlug(keywordData.primaryKeyword);
         const metaTags = generateMetaTags(contentBrief, keywordData, slug);
 
@@ -119,7 +205,9 @@ export async function POST(req: NextRequest) {
           sections,
           infographics,
           keywordData,
-          metaTags as Record<string, unknown>
+          metaTags as Record<string, unknown>,
+          research ?? undefined,
+          body.category
         );
 
         send('status', { phase: 'post', message: 'Scoring SEO...' });
@@ -140,9 +228,10 @@ export async function POST(req: NextRequest) {
         });
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : 'Generation failed';
+        console.error('[generate] Fatal error:', error);
         send('error', { message });
       } finally {
-        controller.close();
+        try { controller.close(); } catch { /* already closed */ }
       }
     },
   });

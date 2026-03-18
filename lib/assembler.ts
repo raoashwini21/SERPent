@@ -1,5 +1,7 @@
-import { ContentBrief, KeywordData } from './types';
+import { ContentBrief, KeywordData, ResearchBrief } from './types';
 import { generateFAQSchema, generateArticleSchema } from './seo/schema-generator';
+import { injectInternalLinks } from './links/internal-linker';
+import { injectExternalLinks } from './links/external-linker';
 
 function stripHtml(html: string): string {
   return html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -82,7 +84,9 @@ export function assembleHTML(
   sections: Map<string, string>,
   infographics: Map<string, string | null>,
   keywords: KeywordData,
-  meta: Record<string, unknown>
+  meta: Record<string, unknown>,
+  research?: ResearchBrief,
+  category?: string
 ): string {
   // Build FAQ schema from FAQ section content
   const faqHtml = sections.get('faq') ?? '';
@@ -117,6 +121,15 @@ export function assembleHTML(
     })
     .join('\n\n');
 
+  // ── Link Injection ────────────────────────────────────────────────────────
+  let bodyHtml = sectionBlocks;
+  if (category) {
+    try { bodyHtml = injectInternalLinks(bodyHtml, category); } catch { /* non-fatal */ }
+  }
+  if (research) {
+    try { bodyHtml = injectExternalLinks(bodyHtml, research); } catch { /* non-fatal */ }
+  }
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -135,7 +148,7 @@ ${articleSchemaJson}
 
 ${toc}
 
-${sectionBlocks}
+${bodyHtml}
 
 </article>
 </body>

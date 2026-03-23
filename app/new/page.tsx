@@ -235,13 +235,21 @@ export default function NewBlogPage() {
         className="w-full md:w-[40%] shrink-0 border-r border-gray-200 bg-white flex flex-col h-screen"
       >
         <div className="px-5 py-4 border-b border-gray-100">
-          <h1 className="text-base font-bold text-gray-900">Blog Builder</h1>
-          <p className="text-xs text-gray-500 mt-0.5">
+          <div className="flex items-center gap-2 mb-0.5">
+            <span className="text-base">✨</span>
+            <h1 className="text-base font-bold text-gray-900">Create New Blog</h1>
+          </div>
+          <p className="text-xs text-gray-500 pl-6">
             {genState === 'idle' && 'Configure your blog'}
             {(genState === 'generating' || genState === 'checkpoint') && 'Generating…'}
             {genState === 'complete' && 'Generation complete'}
             {genState === 'error' && 'Generation failed'}
           </p>
+          <nav className="text-xs text-gray-400 mt-1.5 pl-6">
+            <span className="text-gray-500 font-medium">Dashboard</span>
+            <span className="mx-1">›</span>
+            <span style={{ color: '#6C5CE7' }} className="font-medium">New Blog</span>
+          </nav>
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-5 space-y-5">

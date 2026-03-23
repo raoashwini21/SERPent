@@ -14,7 +14,7 @@ interface ProgressStreamProps {
 const PHASES = [
   { id: 'seo', label: 'SEO Research' },
   { id: 'research', label: 'Product Research' },
-  { id: 'generate', label: 'Content Generation' },
+  { id: 'generate', label: 'Content Gen' },
   { id: 'post', label: 'Post-Processing' },
 ];
 
@@ -31,44 +31,42 @@ export default function ProgressStream({ events, currentPhase }: ProgressStreamP
           return (
             <div key={phase.id} className="flex items-center gap-1 flex-1 min-w-0">
               <div className="flex flex-col items-center min-w-0 flex-1">
-                <div
-                  className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0"
-                  style={{
-                    backgroundColor: done ? '#22C55E' : active ? '#6C5CE7' : '#E5E7EB',
-                    color: done || active ? '#FFFFFF' : '#9CA3AF',
-                  }}
-                >
-                  {done ? '✓' : idx + 1}
+                <div className="relative">
+                  <div
+                    className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0 transition-colors"
+                    style={{
+                      backgroundColor: done ? '#22C55E' : active ? '#6C5CE7' : '#E5E7EB',
+                      color: done || active ? '#FFFFFF' : '#9CA3AF',
+                    }}
+                  >
+                    {done ? '✓' : idx + 1}
+                  </div>
+                  {active && (
+                    <span
+                      className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full pulse-dot"
+                      style={{ backgroundColor: '#A29BFE' }}
+                    />
+                  )}
                 </div>
-                <span
-                  className="text-xs mt-1 text-center leading-tight"
-                  style={{ color: active ? '#6C5CE7' : done ? '#22C55E' : '#9CA3AF' }}
-                >
+                <span className="text-xs mt-1 text-center leading-tight" style={{ color: active ? '#6C5CE7' : done ? '#22C55E' : '#9CA3AF' }}>
                   {phase.label}
                 </span>
               </div>
               {idx < PHASES.length - 1 && (
-                <div
-                  className="h-0.5 flex-1 mb-5 mx-0.5"
-                  style={{ backgroundColor: done ? '#22C55E' : '#E5E7EB' }}
-                />
+                <div className="h-0.5 flex-1 mb-5 mx-0.5" style={{ backgroundColor: done ? '#22C55E' : '#E5E7EB' }} />
               )}
             </div>
           );
         })}
       </div>
 
-      {/* Log */}
-      <div className="bg-gray-900 rounded-lg p-3 h-56 overflow-y-auto font-mono">
+      {/* Terminal log */}
+      <div className="bg-gray-900 rounded-xl p-3 h-56 overflow-y-auto font-mono border border-gray-800">
         {events.length === 0 && (
-          <p className="text-gray-500 text-xs">Starting generation pipeline...</p>
+          <p className="text-gray-600 text-xs">Starting generation pipeline...</p>
         )}
         {events.map((ev, i) => (
-          <div
-            key={i}
-            className="text-xs mb-1 section-appear"
-            style={{ color: i === events.length - 1 ? '#A29BFE' : '#6B7280' }}
-          >
+          <div key={i} className="text-xs mb-1 section-appear" style={{ color: i === events.length - 1 ? '#A29BFE' : '#6B7280' }}>
             <span style={{ color: '#00D2FF' }}>[{ev.phase}]</span> {ev.message}
           </div>
         ))}

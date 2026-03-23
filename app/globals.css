@@ -17,6 +17,7 @@ body {
   color: #111827;
 }
 
+/* ─── Blog preview styles ──────────────────────────────────────────────── */
 .blog-preview h1 { font-size: 1.875rem; font-weight: 700; margin-bottom: 1rem; color: #111827; }
 .blog-preview h2 { font-size: 1.375rem; font-weight: 700; margin-top: 2rem; margin-bottom: 0.75rem; color: #111827; }
 .blog-preview h3 { font-size: 1.125rem; font-weight: 600; margin-top: 1.25rem; margin-bottom: 0.5rem; color: #374151; }
@@ -36,13 +37,55 @@ body {
 .blog-preview nav.toc li { margin-bottom: 0.25rem; }
 .blog-preview nav.toc a { color: #6C5CE7; font-size: 0.875rem; }
 
+/* ─── Animations ───────────────────────────────────────────────────────── */
 @keyframes fadeSlideIn {
   from { opacity: 0; transform: translateY(8px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 .section-appear { animation: fadeSlideIn 0.3s ease-out both; }
 
-::-webkit-scrollbar { width: 6px; }
+@keyframes slideInLeft {
+  from { opacity: 0; transform: translateX(-10px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.animate-slide-in-left { animation: slideInLeft 0.25s ease-out both; }
+
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.96); }
+  to   { opacity: 1; transform: scale(1); }
+}
+.animate-scale-in { animation: scaleIn 0.2s ease-out both; }
+
+@keyframes pulseDot {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.25; }
+}
+.pulse-dot { animation: pulseDot 1.2s ease-in-out infinite; }
+
+@keyframes toastIn {
+  from { opacity: 0; transform: translateX(40px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.toast-enter { animation: toastIn 0.25s ease-out; }
+
+/* ─── Hover / interaction utilities ───────────────────────────────────── */
+.hover-card {
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+.hover-card:hover {
+  transform: translateY(-2px) scale(1.01);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+}
+
+.btn-press {
+  transition: transform 0.1s ease;
+}
+.btn-press:active {
+  transform: scale(0.97);
+}
+
+/* ─── Scrollbar — purple accent ────────────────────────────────────────── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #D1D5DB; border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: #9CA3AF; }
+::-webkit-scrollbar-thumb { background: #C4B5FD; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #6C5CE7; }

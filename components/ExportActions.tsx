@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useToast } from './Toast';
 
 interface ExportActionsProps {
   html: string;
@@ -8,18 +8,11 @@ interface ExportActionsProps {
   meta: Record<string, unknown>;
 }
 
-type ToastKey = 'html' | 'meta' | 'slug' | null;
-
 export default function ExportActions({ html, slug, meta }: ExportActionsProps) {
-  const [toast, setToast] = useState<ToastKey>(null);
-
-  function showToast(key: ToastKey) {
-    setToast(key);
-    setTimeout(() => setToast(null), 2000);
-  }
+  const { toast } = useToast();
 
   function copyHtml() {
-    navigator.clipboard.writeText(html).then(() => showToast('html'));
+    navigator.clipboard.writeText(html).then(() => toast('HTML copied to clipboard!', 'success'));
   }
 
   function downloadHtml() {
@@ -30,6 +23,7 @@ export default function ExportActions({ html, slug, meta }: ExportActionsProps) 
     a.download = `${slug || 'blog'}.html`;
     a.click();
     URL.revokeObjectURL(url);
+    toast('HTML downloaded', 'success');
   }
 
   function copyMeta() {
@@ -38,48 +32,33 @@ export default function ExportActions({ html, slug, meta }: ExportActionsProps) 
     const lines = [
       `<title>${meta.title ?? ''}</title>`,
       `<meta name="description" content="${meta.description ?? ''}" />`,
-      og
-        ? Object.entries(og)
-            .map(([k, v]) => `<meta property="og:${k}" content="${v}" />`)
-            .join('\n')
-        : '',
-      tw
-        ? Object.entries(tw)
-            .map(([k, v]) => `<meta name="twitter:${k}" content="${v}" />`)
-            .join('\n')
-        : '',
+      og ? Object.entries(og).map(([k, v]) => `<meta property="og:${k}" content="${v}" />`).join('\n') : '',
+      tw ? Object.entries(tw).map(([k, v]) => `<meta name="twitter:${k}" content="${v}" />`).join('\n') : '',
       `<link rel="canonical" href="${meta.canonical ?? ''}" />`,
-    ]
-      .filter(Boolean)
-      .join('\n');
-    navigator.clipboard.writeText(lines).then(() => showToast('meta'));
+    ].filter(Boolean).join('\n');
+    navigator.clipboard.writeText(lines).then(() => toast('Meta tags copied!', 'success'));
   }
 
   function copySlug() {
-    navigator.clipboard.writeText(slug).then(() => showToast('slug'));
+    navigator.clipboard.writeText(slug).then(() => toast(`Slug copied: /${slug}`, 'info'));
   }
 
-  const btnBase =
-    'flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium border transition-colors';
-  const btnStyle = (key: ToastKey) => ({
-    borderColor: toast === key ? '#22C55E' : '#6C5CE7',
-    color: toast === key ? '#22C55E' : '#6C5CE7',
-    backgroundColor: toast === key ? '#F0FDF4' : 'transparent',
-  });
+  const btnCls = 'flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium border btn-press transition-colors hover:bg-purple-50';
+  const btnStyle = { borderColor: '#6C5CE7', color: '#6C5CE7' };
 
   return (
-    <div className="flex flex-wrap gap-2 px-4 py-3 bg-white border-t border-gray-200">
-      <button className={btnBase} style={btnStyle('html')} onClick={copyHtml}>
-        {toast === 'html' ? '✓ Copied!' : 'Copy HTML'}
+    <div className="flex flex-wrap gap-2 px-4 py-3 bg-white border-t border-gray-200 shadow-sm">
+      <button className={btnCls} style={btnStyle} onClick={copyHtml}>
+        📋 Copy HTML
       </button>
-      <button className={btnBase} style={btnStyle(null)} onClick={downloadHtml}>
-        Download HTML
+      <button className={btnCls} style={btnStyle} onClick={downloadHtml}>
+        📥 Download
       </button>
-      <button className={btnBase} style={btnStyle('meta')} onClick={copyMeta}>
-        {toast === 'meta' ? '✓ Copied!' : 'Copy Meta Tags'}
+      <button className={btnCls} style={btnStyle} onClick={copyMeta}>
+        🏷️ Meta Tags
       </button>
-      <button className={btnBase} style={btnStyle('slug')} onClick={copySlug}>
-        {toast === 'slug' ? '✓ Copied!' : `/${slug}`}
+      <button className={btnCls} style={btnStyle} onClick={copySlug}>
+        🔗 /{slug}
       </button>
     </div>
   );

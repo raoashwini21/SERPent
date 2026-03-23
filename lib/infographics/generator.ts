@@ -36,6 +36,8 @@ export async function generateInfographic(
   const template = INFOGRAPHIC_TEMPLATES[type];
   if (!template) return null;
 
+  console.log(`[INFOGRAPHIC] Starting ${type} for section ${section.id}`);
+
   try {
     const data = template.extractData(section, research, keywords);
     const productName = research.productName;
@@ -55,11 +57,15 @@ export async function generateInfographic(
 
     // Basic validation: must start with <svg
     if (!cleaned.startsWith('<svg')) {
+      console.warn(`[INFOGRAPHIC] ${type} — response did not start with <svg>, got: ${cleaned.slice(0, 80)}`);
       return null;
     }
 
+    console.log(`[INFOGRAPHIC] Generated ${type} — ${cleaned.length} chars`);
     return cleaned;
-  } catch {
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error(`[INFOGRAPHIC] Failed ${type}: ${msg}`);
     return null;
   }
 }

@@ -26,10 +26,10 @@ DESIGN REQUIREMENTS:
 - Use clipPath on every row group to prevent text overflow
 
 {svgRules}`,
-    extractData: (section, research, keywords) => {
-      const features = research.features.slice(0, 6).map((f) => f.name);
+    extractData: (_section, research, keywords) => {
+      const features = (research.features || []).slice(0, 6).map((f) => f.name);
       const rows = features.map((f) => {
-        const isSRWin = research.keyDifferentiators.some((d) =>
+        const isSRWin = (research.keyDifferentiators || []).some((d) =>
           d.toLowerCase().includes(f.toLowerCase())
         );
         return `${f}: ${research.productName}=partial, SalesRobot=${isSRWin ? 'win' : 'neutral'}`;
@@ -39,27 +39,31 @@ DESIGN REQUIREMENTS:
   },
 
   pros_cons: {
-    prompt: `Generate an SVG pros and cons chart for {productName}.
+    prompt: `Generate a clean SVG pros and cons chart for {productName}.
 
 DATA:
 {data}
 
 DESIGN REQUIREMENTS:
-- White (#FFFFFF) background rect with rounded corners (rx="16") and border stroke="#E5E7EB" stroke-width="1"
-- viewBox="0 0 800 {auto-height}"
-- Two equal columns split by a vertical divider (#E5E7EB)
-- Left column: green (#22C55E) header bar with white "✓ Pros" text
-  - Each pro row: light green-tinted background (#F0FDF4), small green check circle, text in #1F2937
-  - Each row has a clipPath — text max 60 chars, font-size 12px
-- Right column: red (#EF4444) header bar with white "✗ Cons" text
-  - Each con row: light red-tinted background (#FEF2F2), small red X circle, text in #1F2937
-  - Each row has a clipPath — text max 60 chars, font-size 12px
-- Subtle row separators stroke="#E5E7EB"
-- Use text-anchor="start" and explicit x positioning for all item text
+- viewBox="0 0 800 400"
+- White (#FFFFFF) background rect, rx="16", stroke="#E5E7EB" stroke-width="1"
+- Two equal columns (each 380px wide) split by a 1px vertical line at x=400, stroke="#E5E7EB"
+- LEFT COLUMN — Pros:
+  - Green header bar (#22C55E) from x=20 y=20 to x=390 h=44, rx="8", with white text "✓ Pros" font-size="16" bold centered
+  - Each pro: white row with left green circle (cx=42 cy=Y r=8 fill="#22C55E"), then text at x=58 fill="#1F2937" font-size="13"
+  - Row height 36px, starting y=80
+- RIGHT COLUMN — Cons:
+  - Red header bar (#EF4444) from x=410 y=20 to x=780 h=44, rx="8", with white text "✗ Cons" font-size="16" bold centered
+  - Each con: white row with left red circle (cx=430 cy=Y r=8 fill="#EF4444"), then text at x=446 fill="#1F2937" font-size="13"
+  - Row height 36px, starting y=80
+- Truncate all text to max 35 characters — add "..." if longer
+- Each text element uses clip-path to stay in its column
 
 {svgRules}`,
     extractData: (_section, research, keywords) => {
-      return `Product: ${research.productName}\nKeyword: ${keywords.primaryKeyword}\nPros:\n${research.pros.slice(0, 5).map((p) => `- ${p}`).join('\n')}\nCons:\n${research.cons.slice(0, 4).map((c) => `- ${c}`).join('\n')}`;
+      const pros = (research.pros || []).slice(0, 5).map((p) => `- ${String(p).slice(0, 50)}`);
+      const cons = (research.cons || []).slice(0, 4).map((c) => `- ${String(c).slice(0, 50)}`);
+      return `Product: ${research.productName}\nKeyword: ${keywords.primaryKeyword}\nPros:\n${pros.join('\n') || '- No pros listed'}\nCons:\n${cons.join('\n') || '- No cons listed'}`;
     },
   },
 
@@ -83,38 +87,46 @@ DESIGN REQUIREMENTS:
 
 {svgRules}`,
     extractData: (_section, research, keywords) => {
-      const items = research.features.slice(0, 6).map(
-        (f) => `${f.name} (rating: ${f.rating ?? 4}/5): ${f.description.slice(0, 60)}`
+      const items = (research.features || []).slice(0, 6).map(
+        (f) => `${f.name} (rating: ${f.rating ?? 4}/5): ${String(f.description || '').slice(0, 60)}`
       );
       return `Product: ${research.productName}\nKeyword: ${keywords.primaryKeyword}\nFeatures:\n${items.join('\n')}`;
     },
   },
 
   pricing: {
-    prompt: `Generate an SVG pricing comparison card layout for {productName}.
+    prompt: `Generate a clean SVG pricing comparison card layout for {productName}.
 
 DATA:
 {data}
 
 DESIGN REQUIREMENTS:
-- White (#FFFFFF) background rect with rounded corners (rx="16") and border stroke="#E5E7EB" stroke-width="1"
-- viewBox="0 0 800 {auto-height}"
-- Horizontal row of pricing cards (one per plan)
-- Each card: light gray background (#F3F4F6), rounded corners (rx="12"), border stroke="#E5E7EB" stroke-width="1"
-- Each card MUST have a <clipPath> (clip-path="url(#clip-plan-N)") matching its rect exactly
-- Plan name: #111827 bold, font-size 15px
-- Price: large #111827 text, font-size 28px, bold; billing period in #6B7280 gray, font-size 12px
-- Feature list: #6B7280 gray, font-size 12px, with #6C5CE7 purple bullet dots; max 60 chars per line
-- SalesRobot / best-value plan: purple border (#6C5CE7) stroke-width="2", "Best Value" badge in purple
-- Free trial note: #6C5CE7 purple text, font-size 12px
-- Text stays within each card's clipPath — no overflow
+- viewBox="0 0 800 320"
+- White (#FFFFFF) background rect, rx="16", stroke="#E5E7EB" stroke-width="1"
+- Render each plan as a vertical card with equal width (divide 760px by number of plans, start at x=20)
+- Each card: fill="#F3F4F6" rx="12" stroke="#E5E7EB" stroke-width="1"
+- Each card has a <clipPath> matching its rect so text never overflows
+- Inside each card (top to bottom):
+  - Plan name: fill="#111827" font-size="15" font-weight="bold" text-anchor="middle"
+  - Price: fill="#111827" font-size="26" font-weight="bold" text-anchor="middle"
+  - Up to 3 features: fill="#6B7280" font-size="12" text-anchor="middle", each truncated to 28 chars max
+- The LAST card (or the "Pro" / "Growth" card if present): use stroke="#6C5CE7" stroke-width="2" and add a small "Best Value" badge (purple rect + white text) at top-right corner
+- Free trial note at bottom center: fill="#6C5CE7" font-size="12" text-anchor="middle"
 
 {svgRules}`,
     extractData: (_section, research, keywords) => {
-      const plans = research.pricing.plans
+      const pricing = research.pricing || { plans: [], freeTrial: false };
+      const plans = (pricing.plans || [])
         .slice(0, 3)
-        .map((p) => `${p.name}: ${p.price} — ${p.features.slice(0, 3).join(', ')}`);
-      return `Product: ${research.productName}\nKeyword: ${keywords.primaryKeyword}\nFree trial: ${research.pricing.freeTrial}\nPlans:\n${plans.join('\n')}`;
+        .map((p) => {
+          const feats = (p.features || []).slice(0, 3).map((f) => String(f).slice(0, 28)).join(', ');
+          return `${p.name}: ${p.price} — ${feats || 'See website for details'}`;
+        });
+      if (plans.length === 0) {
+        plans.push('Starter: Contact for pricing');
+        plans.push('Pro: Contact for pricing');
+      }
+      return `Product: ${research.productName}\nKeyword: ${keywords.primaryKeyword}\nFree trial: ${pricing.freeTrial}\nPlans:\n${plans.join('\n')}`;
     },
   },
 
@@ -137,11 +149,14 @@ DESIGN REQUIREMENTS:
 
 {svgRules}`,
     extractData: (section, research, keywords) => {
-      const steps = section.instructions
+      const steps = (section.instructions || '')
         .split(/[.\n]/)
         .filter((s) => s.trim().length > 10)
         .slice(0, 5)
         .map((s, i) => `Step ${i + 1}: ${s.trim().slice(0, 40)}`);
+      if (steps.length === 0) {
+        steps.push('Step 1: Connect', 'Step 2: Configure', 'Step 3: Launch', 'Step 4: Scale');
+      }
       return `Product: ${research.productName}\nKeyword: ${keywords.primaryKeyword}\nSteps:\n${steps.join('\n')}`;
     },
   },

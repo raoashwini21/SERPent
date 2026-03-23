@@ -66,7 +66,7 @@ export function checkBigramAlignment(
   const topBigrams = bigrams.slice(0, 3).map((b) => b.phrase);
   const targetPhrases = [
     keywords.primaryKeyword.toLowerCase(),
-    ...keywords.secondaryKeywords.map((k) => k.keyword.toLowerCase()),
+    ...(keywords.secondaryKeywords || []).map((k) => k.keyword.toLowerCase()),
   ];
 
   const hits = topBigrams.filter((bigram) =>
@@ -92,8 +92,8 @@ export function checkTrigramAlignment(
   const topTrigrams = trigrams.slice(0, 3).map((t) => t.phrase);
   const targetPhrases = [
     keywords.primaryKeyword.toLowerCase(),
-    ...keywords.secondaryKeywords.map((k) => k.keyword.toLowerCase()),
-    ...keywords.longTailKeywords.map((k) => k.toLowerCase()),
+    ...(keywords.secondaryKeywords || []).map((k) => k.keyword.toLowerCase()),
+    ...(keywords.longTailKeywords || []).map((k) => k.toLowerCase()),
   ];
 
   const hits = topTrigrams.filter((trigram) =>

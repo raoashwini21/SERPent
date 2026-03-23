@@ -2,6 +2,31 @@ import { KeywordData, SEOCheck, SEOScore } from '../types';
 import { extractBigrams, extractTrigrams, checkBigramAlignment, checkTrigramAlignment } from './keyword-density';
 import { validateFormatting } from './formatting-validator';
 
+// ─── Default score returned when the scorer itself fails ─────────────────────
+
+const DEFAULT_SCORE: SEOScore = {
+  overall: 0,
+  checks: [],
+  suggestions: ['SEO scoring failed — please retry'],
+};
+
+// ─── Safe check wrapper ───────────────────────────────────────────────────────
+
+function safeCheck(fn: () => SEOCheck): SEOCheck {
+  try {
+    return fn();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn('[scorer] check threw:', msg);
+    return {
+      category: 'Error',
+      name: 'Check Error',
+      status: 'fail',
+      detail: `Check errored: ${msg}`,
+    };
+  }
+}
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 function stripHtml(html: string): string {
@@ -61,7 +86,7 @@ function checkKeywordInH1(html: string, primaryKeyword: string): SEOCheck {
   return {
     category: 'Keyword Placement',
     name: 'Keyword in H1',
-    status: pass ? 'pass' : h1Text.length === 0 ? 'fail' : 'fail',
+    status: pass ? 'pass' : 'fail',
     detail: pass
       ? `Primary keyword found in H1`
       : h1Text.length === 0
@@ -71,21 +96,21 @@ function checkKeywordInH1(html: string, primaryKeyword: string): SEOCheck {
 }
 
 function checkMetaDescriptionLength(description: string): SEOCheck {
-  const underLimit = description.length <= 150;
-  const status = underLimit ? 'pass' : 'warn';
+  const len = (description || '').length;
+  const underLimit = len <= 150;
   return {
     category: 'Keyword Placement',
     name: 'Meta Description Length',
-    status,
+    status: underLimit ? 'pass' : 'warn',
     detail: underLimit
-      ? `Meta description is ${description.length} chars (under 150)`
-      : `Meta description is ${description.length} chars — trim to under 150`,
+      ? `Meta description is ${len} chars (under 150)`
+      : `Meta description is ${len} chars — trim to under 150`,
   };
 }
 
 function checkUrlSlug(slug: string, primaryKeyword: string): SEOCheck {
   const kwWords = normalizeKw(primaryKeyword).split(/\s+/).slice(0, 2);
-  const pass = kwWords.some((w) => slug.includes(w));
+  const pass = kwWords.some((w) => (slug || '').includes(w));
   return {
     category: 'Keyword Placement',
     name: 'Keyword in URL Slug',
@@ -104,11 +129,10 @@ function checkKeywordDensity(html: string, primaryKeyword: string): SEOCheck {
   }
   const kwWords = normalizeKw(primaryKeyword).split(/\s+/);
   const text = plain.toLowerCase();
-  const pattern = kwWords.join('\\s+');
+  const pattern = kwWords.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+');
   const regex = new RegExp(pattern, 'gi');
   const matches = text.match(regex);
   const count = matches ? matches.length : 0;
-
   const density = (count / totalWords) * 100;
   const inRange = density >= 1 && density <= 2;
   const status = inRange ? 'pass' : density < 0.5 ? 'fail' : 'warn';
@@ -125,7 +149,8 @@ function checkSecondaryKeywords(
   secondaryKeywords: KeywordData['secondaryKeywords']
 ): SEOCheck {
   const plain = stripHtml(html).toLowerCase();
-  const top5 = secondaryKeywords.slice(0, 5);
+  const safeKws = secondaryKeywords || [];
+  const top5 = safeKws.slice(0, 5);
   const found = top5.filter((k) => plain.includes(normalizeKw(k.keyword)));
   const pass = found.length >= 4;
   return {
@@ -150,9 +175,7 @@ function checkWordCount(html: string, targetWordCount: number): SEOCheck {
 }
 
 function checkParagraphLength(html: string): SEOCheck {
-  const paras = (html.match(/<p[^>]*>([\s\S]*?)<\/p>/gi) ?? []).map((p) =>
-    stripHtml(p)
-  );
+  const paras = (html.match(/<p[^>]*>([\s\S]*?)<\/p>/gi) ?? []).map((p) => stripHtml(p));
   const longOnes = paras.filter((p) => countWords(p) > 30);
   return {
     category: 'Content Structure',
@@ -212,7 +235,6 @@ function checkReadability(html: string): SEOCheck {
   const longWords = words.filter((w) => w.length > 6).length;
   const complexRatio = longWords / words.length;
   const avgSentenceLen = words.length / sentences.length;
-  // Rough grade approximation
   const grade = complexRatio * 20 + avgSentenceLen * 0.3;
   const pass = grade <= 8;
   return {
@@ -275,9 +297,8 @@ function checkInternalLinks(html: string): SEOCheck {
 }
 
 function checkExternalLinks(html: string): SEOCheck {
-  const internalPattern = /href=["']https?:\/\/(?:www\.)?salesrobot\.co/gi;
   const allLinks = html.match(/href=["']https?:\/\/[^"']+["']/gi) ?? [];
-  const external = allLinks.filter((l) => !internalPattern.test(l)).length;
+  const external = allLinks.filter((l) => !/salesrobot\.co/i.test(l)).length;
   const pass = external >= 5 && external <= 8;
   return {
     category: 'Links',
@@ -371,64 +392,97 @@ export function scoreContent(
   keywordData: KeywordData,
   meta: { title: string; description: string; slug: string }
 ): SEOScore {
-  const bigrams = extractBigrams(html);
-  const trigrams = extractTrigrams(html);
-
-  const checks: SEOCheck[] = [
-    // Keyword Placement
-    checkKeywordInTitle(meta.title, keywordData.primaryKeyword),
-    checkKeywordInFirst150Words(html, keywordData.primaryKeyword),
-    checkKeywordInH1(html, keywordData.primaryKeyword),
-    checkMetaDescriptionLength(meta.description),
-    checkUrlSlug(meta.slug, keywordData.primaryKeyword),
-    checkKeywordDensity(html, keywordData.primaryKeyword),
-    checkSecondaryKeywords(html, keywordData.secondaryKeywords),
-
-    // Content Structure
-    checkWordCount(html, 2000), // default target; caller should pass actual
-    checkParagraphLength(html),
-    checkHasFAQSection(html),
-    checkHasComparisonTable(html),
-    checkHeadingDensity(html),
-    checkReadability(html),
-
-    // Keyword Density
-    checkBigramAlignment(bigrams, keywordData),
-    checkTrigramAlignment(trigrams, keywordData),
-
-    // Technical SEO
-    checkFAQSchema(html),
-    checkArticleSchema(html),
-    checkImageAltTexts(html),
-
-    // Links
-    checkInternalLinks(html),
-    checkExternalLinks(html),
-
-    // CTAs & Formatting
-    checkCTACount(html),
-    checkBoldPresent(html),
-    checkItalicsPresent(html),
-
-    // Infographics
-    checkInfographicsPresent(html),
-    checkSVGAccessibility(html),
-  ];
-
-  // Merge in formatting validator results (dedup by name)
-  const formattingChecks = validateFormatting(html);
-  for (const fc of formattingChecks) {
-    if (!checks.find((c) => c.name === fc.name)) {
-      checks.push(fc);
-    }
+  // Top-level defensive guards
+  if (!html) {
+    console.warn('[scorer] html is empty — returning default score');
+    return DEFAULT_SCORE;
+  }
+  if (!keywordData?.primaryKeyword) {
+    console.warn('[scorer] keywordData.primaryKeyword is missing — returning default score');
+    return DEFAULT_SCORE;
   }
 
-  const passCount = checks.filter((c) => c.status === 'pass').length;
-  const overall = Math.round((passCount / checks.length) * 100);
+  // Ensure arrays are never undefined
+  const safeKeywordData: KeywordData = {
+    ...keywordData,
+    secondaryKeywords: keywordData.secondaryKeywords || [],
+    longTailKeywords: keywordData.longTailKeywords || [],
+    peopleAlsoAsk: keywordData.peopleAlsoAsk || [],
+  };
 
-  const suggestions = checks
-    .filter((c) => c.status !== 'pass')
-    .map((c) => `[${c.status.toUpperCase()}] ${c.name}: ${c.detail}`);
+  const safeMeta = {
+    title: meta?.title || '',
+    description: meta?.description || '',
+    slug: meta?.slug || '',
+  };
 
-  return { overall, checks, suggestions };
+  try {
+    const bigrams = extractBigrams(html);
+    const trigrams = extractTrigrams(html);
+
+    const checks: SEOCheck[] = [
+      // Keyword Placement
+      safeCheck(() => checkKeywordInTitle(safeMeta.title, safeKeywordData.primaryKeyword)),
+      safeCheck(() => checkKeywordInFirst150Words(html, safeKeywordData.primaryKeyword)),
+      safeCheck(() => checkKeywordInH1(html, safeKeywordData.primaryKeyword)),
+      safeCheck(() => checkMetaDescriptionLength(safeMeta.description)),
+      safeCheck(() => checkUrlSlug(safeMeta.slug, safeKeywordData.primaryKeyword)),
+      safeCheck(() => checkKeywordDensity(html, safeKeywordData.primaryKeyword)),
+      safeCheck(() => checkSecondaryKeywords(html, safeKeywordData.secondaryKeywords)),
+
+      // Content Structure
+      safeCheck(() => checkWordCount(html, 2000)),
+      safeCheck(() => checkParagraphLength(html)),
+      safeCheck(() => checkHasFAQSection(html)),
+      safeCheck(() => checkHasComparisonTable(html)),
+      safeCheck(() => checkHeadingDensity(html)),
+      safeCheck(() => checkReadability(html)),
+
+      // Keyword Density
+      safeCheck(() => checkBigramAlignment(bigrams, safeKeywordData)),
+      safeCheck(() => checkTrigramAlignment(trigrams, safeKeywordData)),
+
+      // Technical SEO
+      safeCheck(() => checkFAQSchema(html)),
+      safeCheck(() => checkArticleSchema(html)),
+      safeCheck(() => checkImageAltTexts(html)),
+
+      // Links
+      safeCheck(() => checkInternalLinks(html)),
+      safeCheck(() => checkExternalLinks(html)),
+
+      // CTAs & Formatting
+      safeCheck(() => checkCTACount(html)),
+      safeCheck(() => checkBoldPresent(html)),
+      safeCheck(() => checkItalicsPresent(html)),
+
+      // Infographics
+      safeCheck(() => checkInfographicsPresent(html)),
+      safeCheck(() => checkSVGAccessibility(html)),
+    ];
+
+    // Merge in formatting validator results (dedup by name)
+    try {
+      const formattingChecks = validateFormatting(html);
+      for (const fc of formattingChecks) {
+        if (!checks.find((c) => c.name === fc.name)) {
+          checks.push(fc);
+        }
+      }
+    } catch (err) {
+      console.warn('[scorer] validateFormatting threw:', err);
+    }
+
+    const passCount = checks.filter((c) => c.status === 'pass').length;
+    const overall = checks.length > 0 ? Math.round((passCount / checks.length) * 100) : 0;
+
+    const suggestions = checks
+      .filter((c) => c.status !== 'pass')
+      .map((c) => `[${c.status.toUpperCase()}] ${c.name}: ${c.detail}`);
+
+    return { overall, checks, suggestions };
+  } catch (err) {
+    console.error('[scorer] Unexpected error in scoreContent:', err);
+    return DEFAULT_SCORE;
+  }
 }

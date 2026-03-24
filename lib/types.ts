@@ -102,7 +102,51 @@ export interface SEOScore {
   suggestions: string[];
 }
 
-export interface GenerationEvent {
-  event: string;
-  data: unknown;
+export interface WebflowBlog {
+  id: string;
+  title: string;
+  slug: string;
+  metaTitle: string;
+  metaDescription: string;
+  excerpt: string;
+  postBody: string;
+  publishedAt: string;
+}
+
+export interface WebflowBlogUpdate {
+  postBody?: string;
+  metaTitle?: string;
+  metaDescription?: string;
+  excerpt?: string;
+}
+
+export interface GSCKeyword {
+  query: string;
+  clicks: number;
+  impressions: number;
+  ctr: number;
+  position: number;
+}
+
+export interface BlogUpdateAnalysis {
+  currentScore: SEOScore;
+  contentIssues: {
+    outdatedFacts: { quote: string; issue: string; suggestedFix: string }[];
+    yearReferences: { quote: string; oldYear: number; context: string }[];
+    brokenClaims: { quote: string; issue: string }[];
+  };
+  seoIssues: SEOScore;
+  suggestedFixes: string[];
+  missingSections: string[];
+  keywordGaps: string[];
+  gscQuickWins?: GSCKeyword[];
+  gscMissing?: GSCKeyword[];
+  webflowItemId?: string;
+}
+
+export interface UpdateChange {
+  type: string;
+  description: string;
+  before?: string;
+  after?: string;
 }

@@ -2,26 +2,20 @@ import { NextRequest, NextResponse } from 'next/server';
 import { scrapeUrl } from '../../../../lib/jina';
 import { callClaude } from '../../../../lib/claude';
 import { scoreContent } from '../../../../lib/seo/content-scorer';
-import { fetchBlogByUrl, fetchBlogBySlug } from '../../../../lib/webflow';
-import { parseGSCData, findQuickWins, findMissingKeywords } from '../../../../lib/gsc-parser';
-import { analyzeSERP } from '../../../../lib/seo/serp-analyzer';
-import { discoverKeywords } from '../../../../lib/seo/keyword-discovery';
-import { estimateKeywordMetrics } from '../../../../lib/seo/keyword-scoring';
-import { searchWeb } from '../../../../lib/jina';
-import type { BlogUpdateAnalysis, GSCKeyword } from '../../../../lib/types';
+import { fetchBlogById, fetchBlogByUrl } from '../../../../lib/webflow';
+import { findQuickWins, findMissingKeywords } from '../../../../lib/gsc-parser';
+import type { GSCKeyword, BlogUpdateAnalysis } from '../../../../lib/types';
 
 export interface AnalyzeResult {
   originalHtml: string;
   originalText: string;
-  score: {
-    overall: number;
-    checks: { category: string; name: string; status: string; detail: string }[];
-    suggestions: string[];
-  };
+  analysis: BlogUpdateAnalysis;
   issues: UpdateIssue[];
   wordCount: number;
-  url: string;
-  blogUpdateAnalysis?: BlogUpdateAnalysis;
+  sourceUrl?: string;
+  webflowItemId?: string;
+  metaTitle?: string;
+  metaDescription?: string;
 }
 
 export interface UpdateIssue {
@@ -32,31 +26,37 @@ export interface UpdateIssue {
   selected: boolean;
 }
 
-interface OutdatedFact {
-  quote: string;
-  issue: string;
-  suggestedFix: string;
+const SURGICAL_SYSTEM = `You are an SEO content auditor performing a surgical analysis of a blog post. Your job is to find specific, concrete issues — not general suggestions.
+
+Return a JSON object with these fields:
+{
+  "outdatedFacts": [{ "quote": "<exact text from article, max 80 chars>", "issue": "<what's wrong>", "suggestedFix": "<specific correction>" }],
+  "yearReferences": [{ "quote": "<exact text with year>", "oldYear": 2023, "context": "<why this year is outdated>" }],
+  "brokenClaims": [{ "quote": "<exact text>", "issue": "<why this claim is likely wrong/unverifiable>" }],
+  "missingSections": ["<section title that should exist but doesn't>"],
+  "keywordGaps": ["<keyword or phrase that should appear more>"]
 }
 
-interface YearReference {
-  quote: string;
-  oldYear: number;
-}
+Rules:
+- "quote" must be VERBATIM text from the article (so we can find and replace it)
+- Only flag real issues, not hypothetical ones
+- yearReferences: only years that are clearly outdated (e.g. 2022, 2023 stats presented as current)
+- missingSections: max 3, only genuinely missing important sections
+- keywordGaps: max 5, only semantically relevant missing keywords
+- Return ONLY valid JSON, no markdown`;
 
-interface BrokenClaim {
-  quote: string;
-  issue: string;
+function htmlToText(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
-
-interface SurgicalAnalysis {
-  outdatedFacts: OutdatedFact[];
-  yearReferences: YearReference[];
-  missingSections: string[];
-  keywordGaps: string[];
-  brokenClaims: BrokenClaim[];
-}
-
-const SURGICAL_SYSTEM = `You are an expert SEO content auditor. Analyze the provided blog and return ONLY specific, actionable issues. Do NOT suggest rewriting the whole blog. Find only what is genuinely wrong.`;
 
 export async function POST(req: NextRequest) {
   try {
@@ -65,35 +65,48 @@ export async function POST(req: NextRequest) {
       blog_url?: string;
       blog_html?: string;
       primary_keyword?: string;
-      gsc_keywords?: string;
+      gsc_keywords?: GSCKeyword[];
     };
 
     const { webflow_item_id, blog_url, blog_html, primary_keyword, gsc_keywords } = body;
 
-    // ── a. Get content ────────────────────────────────────────────────────────
     let originalHtml = '';
-    let fetchedUrl = blog_url || '';
-    let webflowItemId = webflow_item_id;
+    let sourceUrl: string | undefined;
+    let webflowItemId: string | undefined;
+    let metaTitle: string | undefined;
+    let metaDescription: string | undefined;
 
+    // ── 1. Fetch content ─────────────────────────────────────────────────────
     if (webflow_item_id) {
-      console.log(`[update/analyze] Fetching from Webflow item: ${webflow_item_id}`);
-      // Try fetching by slug if it looks like a slug, else list to find id
-      const blog = await fetchBlogBySlug(webflow_item_id).catch(() => null);
-      if (blog) {
-        originalHtml = blog.postBody;
-        webflowItemId = blog.id;
-        fetchedUrl = fetchedUrl || `https://www.salesrobot.co/blogs/${blog.slug}`;
+      console.log(`[update/analyze] Fetching Webflow item ${webflow_item_id}`);
+      const blog = await fetchBlogById(webflow_item_id);
+      if (!blog) {
+        return NextResponse.json({ error: 'Webflow item not found' }, { status: 404 });
       }
+      originalHtml = blog.postBody;
+      webflowItemId = blog.id;
+      metaTitle = blog.metaTitle;
+      metaDescription = blog.metaDescription;
     } else if (blog_url) {
-      console.log(`[update/analyze] Fetching from URL: ${blog_url}`);
-      // Try Webflow first
-      const wfBlog = await fetchBlogByUrl(blog_url).catch(() => null);
-      if (wfBlog && wfBlog.postBody) {
-        originalHtml = wfBlog.postBody;
-        webflowItemId = wfBlog.id;
-      } else {
-        const scraped = await scrapeUrl(blog_url);
-        originalHtml = scraped
+      console.log(`[update/analyze] Scraping ${blog_url}`);
+      // Try Webflow first for known Webflow URLs
+      try {
+        const wfBlog = await fetchBlogByUrl(blog_url);
+        if (wfBlog && wfBlog.postBody && wfBlog.postBody.length > 200) {
+          originalHtml = wfBlog.postBody;
+          webflowItemId = wfBlog.id;
+          metaTitle = wfBlog.metaTitle;
+          metaDescription = wfBlog.metaDescription;
+        }
+      } catch {
+        // Not in Webflow or no token configured — fall through to scraping
+      }
+      if (!originalHtml) {
+        const scrapedText = await scrapeUrl(blog_url);
+        if (!scrapedText || scrapedText.trim().length < 100) {
+          return NextResponse.json({ error: 'Could not fetch page content' }, { status: 400 });
+        }
+        originalHtml = scrapedText
           .split('\n')
           .map((line) => {
             const t = line.trim();
@@ -106,159 +119,167 @@ export async function POST(req: NextRequest) {
           })
           .join('\n');
       }
+      sourceUrl = blog_url;
     } else if (blog_html) {
       originalHtml = blog_html;
     } else {
-      return NextResponse.json({ error: 'One of webflow_item_id, blog_url, or blog_html is required' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'One of webflow_item_id, blog_url, or blog_html is required' },
+        { status: 400 }
+      );
     }
 
     if (!originalHtml || originalHtml.trim().length < 100) {
-      return NextResponse.json({ error: 'Could not retrieve blog content' }, { status: 400 });
+      return NextResponse.json({ error: 'Blog content is too short to analyze' }, { status: 400 });
     }
 
-    const originalText = originalHtml.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    const originalText = htmlToText(originalHtml);
     const wordCount = originalText.split(/\s+/).filter(Boolean).length;
 
-    // ── b. Keyword research ───────────────────────────────────────────────────
-    const topicGuess = primary_keyword ||
-      (fetchedUrl ? fetchedUrl.replace(/^https?:\/\/[^/]+\/blogs?\//, '').replace(/-/g, ' ').split('/')[0] : 'blog');
+    // ── 2. Keyword from hint or URL ───────────────────────────────────────────
+    const keyword =
+      primary_keyword ||
+      (sourceUrl
+        ? sourceUrl.replace(/^https?:\/\/[^/]+\/blog\//, '').replace(/-/g, ' ').split('/')[0]
+        : '') ||
+      'blog';
 
-    let keywordData;
-    try {
-      const keywords = await discoverKeywords(topicGuess, 'blog');
-      const serpContent = await searchWeb(topicGuess).catch(() => '');
-      keywordData = await estimateKeywordMetrics(keywords, serpContent);
-    } catch {
-      keywordData = {
-        primaryKeyword: topicGuess,
+    // ── 3. SEO score ──────────────────────────────────────────────────────────
+    const currentScore = scoreContent(
+      originalHtml,
+      {
+        primaryKeyword: keyword,
         secondaryKeywords: [],
         longTailKeywords: [],
         peopleAlsoAsk: [],
         keywordGroups: {},
-      };
-    }
-
-    // ── c. SERP analysis ──────────────────────────────────────────────────────
-    let serpAnalysis;
-    try {
-      serpAnalysis = await analyzeSERP(keywordData.primaryKeyword);
-    } catch {
-      serpAnalysis = null;
-    }
-
-    // ── d. SEO score ──────────────────────────────────────────────────────────
-    const scoreResult = scoreContent(
-      originalHtml,
-      keywordData,
-      { title: '', description: '', slug: '' }
+      },
+      { title: metaTitle || '', description: metaDescription || '', slug: '' }
     );
 
-    // ── e. Claude surgical analysis ───────────────────────────────────────────
-    const surgicalPrompt = `Analyze this blog. Do NOT suggest rewriting the whole thing. Only find SPECIFIC issues:
-1. OUTDATED FACTS: exact quotes + why outdated
-2. YEAR REFERENCES: old years (2023/2024/2025) that should be 2026
-3. MISSING SECTIONS vs SERP competitors
-4. KEYWORD GAPS
-5. BROKEN CLAIMS
+    // ── 4. Surgical Claude analysis ───────────────────────────────────────────
+    console.log('[update/analyze] Running surgical Claude analysis');
+    type SurgicalResult = {
+      outdatedFacts: { quote: string; issue: string; suggestedFix: string }[];
+      yearReferences: { quote: string; oldYear: number; context: string }[];
+      brokenClaims: { quote: string; issue: string }[];
+      missingSections: string[];
+      keywordGaps: string[];
+    };
 
-SERP competitors must-have sections: ${serpAnalysis?.mustHaveSections?.join(', ') || 'N/A'}
-Target keyword: ${keywordData.primaryKeyword}
-
-BLOG CONTENT (first 6000 chars):
-${originalHtml.slice(0, 6000)}
-
-Return JSON: { outdatedFacts: [{quote,issue,suggestedFix}], yearReferences: [{quote,oldYear}], missingSections: [string], keywordGaps: [string], brokenClaims: [{quote,issue}] }`;
-
-    let surgical: SurgicalAnalysis = {
+    let surgicalResult: SurgicalResult = {
       outdatedFacts: [],
       yearReferences: [],
+      brokenClaims: [],
       missingSections: [],
       keywordGaps: [],
-      brokenClaims: [],
     };
 
     try {
-      const raw = await callClaude(SURGICAL_SYSTEM, surgicalPrompt, 2048);
+      const contentSnippet = originalText.slice(0, 5000);
+      const raw = await callClaude(
+        SURGICAL_SYSTEM,
+        `Primary keyword: ${keyword}\nCurrent year: ${new Date().getFullYear()}\n\nBlog content:\n${contentSnippet}`,
+        1500
+      );
       const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
-      surgical = JSON.parse(cleaned) as SurgicalAnalysis;
+      surgicalResult = JSON.parse(cleaned) as SurgicalResult;
     } catch (err) {
-      console.warn('[update/analyze] Surgical analysis parse failed:', err);
+      console.warn('[update/analyze] Surgical Claude analysis failed:', err);
     }
 
-    // Build issues list
-    const issues: UpdateIssue[] = [];
+    // ── 5. GSC analysis ───────────────────────────────────────────────────────
+    const gscQuickWins = gsc_keywords ? findQuickWins(gsc_keywords) : undefined;
+    const gscMissing = gsc_keywords ? findMissingKeywords(gsc_keywords, originalHtml) : undefined;
 
-    if (surgical.outdatedFacts?.length > 0) {
-      issues.push({ id: 'fix_outdated_facts', label: 'Fix outdated facts', description: `${surgical.outdatedFacts.length} outdated fact(s) found`, severity: 'high', selected: true });
-    }
-    if (surgical.yearReferences?.length > 0) {
-      issues.push({ id: 'update_years', label: 'Update year references', description: `Found old year references to update to 2026`, severity: 'high', selected: true });
-    }
-    if (surgical.missingSections?.length > 0) {
-      issues.push({ id: 'add_missing_sections', label: 'Add missing sections', description: `${surgical.missingSections.length} section(s) competitors have but this post lacks`, severity: 'medium', selected: true });
-    }
-    if (surgical.keywordGaps?.length > 0) {
-      issues.push({ id: 'fix_keyword_density', label: 'Fix keyword gaps', description: `${surgical.keywordGaps.length} keyword gap(s) to address`, severity: 'medium', selected: false });
-    }
-
-    // Standard checks from SEO scorer
-    const ISSUE_MAP: Record<string, { id: string; label: string; severity: UpdateIssue['severity'] }> = {
-      'Internal Links': { id: 'add_internal_links', label: 'Add internal links', severity: 'high' },
-      'External Links': { id: 'add_external_links', label: 'Add external links', severity: 'medium' },
-      'FAQ Section Present': { id: 'add_faq', label: 'Add FAQ section', severity: 'high' },
-      'Paragraph Length': { id: 'fix_paragraph_length', label: 'Fix paragraph length', severity: 'medium' },
-      'Keyword Density': { id: 'fix_keyword_density', label: 'Fix keyword density', severity: 'medium' },
-    };
-
-    for (const check of scoreResult.checks.filter((c) => c.status !== 'pass')) {
-      const mapped = ISSUE_MAP[check.name];
-      if (mapped && !issues.find((i) => i.id === mapped.id) && issues.length < 8) {
-        issues.push({ ...mapped, description: check.detail, selected: mapped.severity === 'high' });
-      }
-    }
-
-    issues.push({ id: 'fix_meta_tags', label: 'Optimize meta tags', description: 'Generate optimized title and meta description', severity: 'low', selected: false });
-
-    // ── f. GSC data ───────────────────────────────────────────────────────────
-    let gscQuickWins: GSCKeyword[] | undefined;
-    let gscMissing: GSCKeyword[] | undefined;
-
-    if (gsc_keywords) {
-      const parsed = parseGSCData(gsc_keywords);
-      if (parsed.length > 0) {
-        gscQuickWins = findQuickWins(parsed);
-        gscMissing = findMissingKeywords(parsed, originalHtml);
-
-        if (gscQuickWins.length > 0) {
-          issues.push({ id: 'optimize_gsc_keywords', label: 'Optimize GSC keywords', description: `${gscQuickWins.length} quick-win keyword(s) from Search Console`, severity: 'high', selected: true });
-        }
-      }
-    }
-
-    // ── g. Build BlogUpdateAnalysis ───────────────────────────────────────────
-    const blogUpdateAnalysis: BlogUpdateAnalysis = {
-      currentScore: scoreResult.overall,
-      contentIssues: [
-        ...surgical.outdatedFacts.map((f) => `Outdated: "${f.quote.slice(0, 80)}" — ${f.issue}`),
-        ...surgical.brokenClaims.map((c) => `Broken claim: "${c.quote.slice(0, 80)}" — ${c.issue}`),
-      ],
-      seoIssues: scoreResult.suggestions,
-      suggestedFixes: issues.map((i) => i.id),
-      missingSections: surgical.missingSections || [],
-      keywordGaps: surgical.keywordGaps || [],
+    // ── 6. Build BlogUpdateAnalysis ───────────────────────────────────────────
+    const analysis: BlogUpdateAnalysis = {
+      currentScore,
+      contentIssues: {
+        outdatedFacts: surgicalResult.outdatedFacts || [],
+        yearReferences: surgicalResult.yearReferences || [],
+        brokenClaims: surgicalResult.brokenClaims || [],
+      },
+      seoIssues: currentScore,
+      suggestedFixes: surgicalResult.keywordGaps || [],
+      missingSections: surgicalResult.missingSections || [],
+      keywordGaps: surgicalResult.keywordGaps || [],
       gscQuickWins,
       gscMissing,
       webflowItemId,
     };
 
+    // ── 7. Derive issues[] for UI ─────────────────────────────────────────────
+    const issues: UpdateIssue[] = [];
+
+    if (surgicalResult.outdatedFacts.length > 0) {
+      issues.push({
+        id: 'fix_outdated_facts',
+        label: `Fix ${surgicalResult.outdatedFacts.length} outdated fact${surgicalResult.outdatedFacts.length > 1 ? 's' : ''}`,
+        description: surgicalResult.outdatedFacts[0]?.issue || 'Outdated facts detected',
+        severity: 'high',
+        selected: true,
+      });
+    }
+
+    if (surgicalResult.yearReferences.length > 0) {
+      issues.push({
+        id: 'update_years',
+        label: 'Update year references',
+        description: `Found ${surgicalResult.yearReferences.length} outdated year reference${surgicalResult.yearReferences.length > 1 ? 's' : ''}`,
+        severity: 'medium',
+        selected: true,
+      });
+    }
+
+    const failedChecks = currentScore.checks.filter((c) => c.status !== 'pass');
+    const SCORE_ISSUE_MAP: Record<string, { id: string; label: string; severity: UpdateIssue['severity'] }> = {
+      'Internal Links':     { id: 'add_internal_links',  label: 'Add internal links',    severity: 'high'   },
+      'External Links':     { id: 'add_external_links',  label: 'Add external links',    severity: 'medium' },
+      'FAQ Section Present':{ id: 'add_faq',             label: 'Add FAQ section',       severity: 'high'   },
+      'Paragraph Length':   { id: 'fix_paragraph_length',label: 'Fix long paragraphs',   severity: 'medium' },
+      'Keyword Density':    { id: 'fix_keyword_density', label: 'Fix keyword density',   severity: 'high'   },
+    };
+
+    const existingIds = new Set(issues.map((i) => i.id));
+    for (const check of failedChecks) {
+      const mapped = SCORE_ISSUE_MAP[check.name];
+      if (mapped && !existingIds.has(mapped.id) && issues.length < 7) {
+        issues.push({ ...mapped, description: check.detail, selected: mapped.severity === 'high' });
+        existingIds.add(mapped.id);
+      }
+    }
+
+    if (surgicalResult.missingSections.length > 0 && !existingIds.has('add_missing_sections')) {
+      issues.push({
+        id: 'add_missing_sections',
+        label: `Add ${surgicalResult.missingSections.length} missing section${surgicalResult.missingSections.length > 1 ? 's' : ''}`,
+        description: surgicalResult.missingSections.join(', '),
+        severity: 'medium',
+        selected: false,
+      });
+    }
+
+    if (gscQuickWins && gscQuickWins.length > 0 && !existingIds.has('optimize_gsc_keywords')) {
+      issues.push({
+        id: 'optimize_gsc_keywords',
+        label: `Optimize ${gscQuickWins.length} GSC keyword${gscQuickWins.length > 1 ? 's' : ''}`,
+        description: `Quick-win keywords at positions 4–15: ${gscQuickWins.slice(0, 3).map((k) => k.query).join(', ')}`,
+        severity: 'high',
+        selected: true,
+      });
+    }
+
     const result: AnalyzeResult = {
       originalHtml,
       originalText,
-      score: scoreResult,
+      analysis,
       issues,
       wordCount,
-      url: fetchedUrl,
-      blogUpdateAnalysis,
+      sourceUrl,
+      webflowItemId,
+      metaTitle,
+      metaDescription,
     };
 
     return NextResponse.json(result);

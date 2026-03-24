@@ -69,15 +69,19 @@ export function parseGSCData(csvContent: string): GSCKeyword[] {
   }
 }
 
+/** Keywords at positions 4–15 with meaningful impressions — easiest ranking wins */
 export function findQuickWins(gscData: GSCKeyword[]): GSCKeyword[] {
   return gscData
-    .filter((kw) => kw.position >= 5 && kw.position <= 20 && kw.impressions > 50)
-    .sort((a, b) => b.impressions - a.impressions);
+    .filter((kw) => kw.position >= 4 && kw.position <= 15 && kw.impressions >= 50)
+    .sort((a, b) => b.impressions - a.impressions)
+    .slice(0, 10);
 }
 
+/** Keywords with impressions but not mentioned in the blog HTML */
 export function findMissingKeywords(gscData: GSCKeyword[], blogHtml: string): GSCKeyword[] {
   const text = stripHtml(blogHtml);
   return gscData
-    .filter((kw) => !text.includes(kw.query.toLowerCase()))
-    .sort((a, b) => b.impressions - a.impressions);
+    .filter((kw) => kw.impressions >= 20 && !text.includes(kw.query.toLowerCase()))
+    .sort((a, b) => b.impressions - a.impressions)
+    .slice(0, 10);
 }

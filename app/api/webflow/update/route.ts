@@ -6,12 +6,13 @@ interface UpdateRequest {
   post_body?: string;
   meta_title?: string;
   meta_description?: string;
+  excerpt?: string;
 }
 
 export async function POST(req: NextRequest) {
   try {
     const body = (await req.json()) as UpdateRequest;
-    const { item_id, post_body, meta_title, meta_description } = body;
+    const { item_id, post_body, meta_title, meta_description, excerpt } = body;
 
     if (!item_id) {
       return NextResponse.json({ error: 'item_id is required' }, { status: 400 });
@@ -21,6 +22,7 @@ export async function POST(req: NextRequest) {
       postBody: post_body,
       metaTitle: meta_title,
       metaDescription: meta_description,
+      excerpt,
     });
 
     if (!success) {

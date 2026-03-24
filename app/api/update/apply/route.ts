@@ -1,118 +1,264 @@
 import { NextRequest } from 'next/server';
 import { callClaude } from '../../../../lib/claude';
 import { scoreContent } from '../../../../lib/seo/content-scorer';
+import { updateBlogContent } from '../../../../lib/webflow';
+import { findMissingKeywords } from '../../../../lib/gsc-parser';
+import type { GSCKeyword, UpdateChange } from '../../../../lib/types';
 
 const CURRENT_YEAR = new Date().getFullYear();
 
+interface OutdatedFact {
+  quote: string;
+  issue: string;
+  suggestedFix: string;
+}
+
 interface ApplyRequest {
-  originalHtml: string;
-  originalText: string;
-  selectedFixes: string[];
-  keyword: string;
-  url: string;
+  original_html: string;
+  webflow_item_id?: string;
+  selected_fixes: string[];
+  keyword_data: {
+    primaryKeyword: string;
+    secondaryKeywords?: { keyword: string }[];
+    longTailKeywords?: string[];
+    peopleAlsoAsk?: string[];
+    keywordGroups?: Record<string, string[]>;
+  };
+  gsc_keywords?: GSCKeyword[];
+  outdated_facts?: OutdatedFact[];
+  missing_sections?: string[];
 }
 
-type FixId =
-  | 'update_year'
-  | 'fix_paragraph_length'
-  | 'add_internal_links'
-  | 'add_external_links'
-  | 'fix_keyword_density'
-  | 'fix_facts'
-  | 'add_faq'
-  | 'fix_meta_tags';
+// ─── Fix handlers ─────────────────────────────────────────────────────────────
 
-// ─── Individual fix handlers ──────────────────────────────────────────────────
-
-async function applyUpdateYear(html: string): Promise<string> {
-  // Replace common past years with current year
-  const pastYears = [2020, 2021, 2022, 2023, 2024].filter((y) => y < CURRENT_YEAR);
+async function fixOutdatedFacts(html: string, facts: OutdatedFact[]): Promise<{ html: string; changes: UpdateChange[] }> {
+  const changes: UpdateChange[] = [];
   let result = html;
-  for (const year of pastYears) {
-    // Only replace years that appear in editorial context (not in URLs/schemas)
-    result = result.replace(
-      new RegExp(`(?<![/\\w])${year}(?![/\\w])`, 'g'),
-      String(CURRENT_YEAR)
-    );
+
+  for (const fact of facts) {
+    if (!fact.quote || fact.quote.length < 10) continue;
+    const idx = result.indexOf(fact.quote);
+    if (idx === -1) continue;
+
+    const SYSTEM = `You are a content editor. Replace ONLY the provided outdated text with an updated version. Keep HTML structure intact. Return ONLY the replacement HTML fragment.`;
+    const prompt = `Replace this outdated text with updated content.
+Issue: ${fact.issue}
+Suggested fix: ${fact.suggestedFix}
+
+OUTDATED TEXT:
+${fact.quote}
+
+Return ONLY the replacement text/HTML fragment (not the whole article).`;
+
+    try {
+      const replacement = await callClaude(SYSTEM, prompt, 512);
+      const cleaned = replacement.replace(/^```(?:html)?\s*/i, '').replace(/```\s*$/, '').trim();
+      result = result.replace(fact.quote, cleaned);
+      changes.push({ type: 'fix_outdated_facts', description: `Fixed: ${fact.issue}`, before: fact.quote, after: cleaned });
+    } catch {
+      // skip this fact
+    }
   }
-  return result;
+
+  return { html: result, changes };
 }
 
-async function applyFixParagraphLength(html: string, keyword: string): Promise<string> {
-  const SYSTEM = `You are a content editor. Fix paragraphs that are too long (over 30 words). Split them into shorter, scannable paragraphs. Keep all information and meaning. Return ONLY the fixed HTML, no explanation.`;
-  const prompt = `The blog post below has some paragraphs that exceed 30 words. Split them into shorter paragraphs (each under 25 words). Keep all content intact. Only change paragraphs that are too long.
+function updateYears(html: string): { html: string; changes: UpdateChange[] } {
+  const changes: UpdateChange[] = [];
+  // Replace 2023/2024/2025 in text nodes only (not inside URLs or historical context)
+  const oldYears = [2023, 2024, 2025].filter((y) => y < CURRENT_YEAR);
+  let result = html;
 
-Primary keyword context: ${keyword}
+  for (const year of oldYears) {
+    // Match year not preceded/followed by slash, digit, or URL characters
+    const re = new RegExp(`(?<![/\\d])${year}(?![/\\d])`, 'g');
+    const before = result;
+    result = result.replace(re, String(CURRENT_YEAR));
+    if (result !== before) {
+      changes.push({ type: 'update_years', description: `Replaced ${year} → ${CURRENT_YEAR}` });
+    }
+  }
+
+  return { html: result, changes };
+}
+
+async function addMissingSections(html: string, sections: string[], keyword: string): Promise<{ html: string; changes: UpdateChange[] }> {
+  const changes: UpdateChange[] = [];
+  if (!sections || sections.length === 0) return { html, changes };
+
+  let result = html;
+
+  for (const section of sections) {
+    const SYSTEM = `You are an SEO content writer. Generate a new blog section as clean HTML. Write 150-250 words. Use <h2> for heading, <p> for paragraphs. Return ONLY the HTML fragment.`;
+    const prompt = `Generate the "${section}" section for a blog about "${keyword}".
+Requirements:
+- 150-250 words
+- Use <h2>${section}</h2> as heading
+- Use <p> tags for paragraphs
+- Natural, informative tone
+- Return ONLY the HTML fragment`;
+
+    try {
+      const generated = await callClaude(SYSTEM, prompt, 1024);
+      const cleaned = generated.replace(/^```(?:html)?\s*/i, '').replace(/```\s*$/, '').trim();
+
+      // Insert before </article> or </body> or append
+      if (/<\/article>/i.test(result)) {
+        result = result.replace(/<\/article>/i, `\n${cleaned}\n</article>`);
+      } else if (/<\/body>/i.test(result)) {
+        result = result.replace(/<\/body>/i, `\n${cleaned}\n</body>`);
+      } else {
+        result = result + '\n' + cleaned;
+      }
+
+      changes.push({ type: 'add_missing_sections', description: `Added section: ${section}` });
+    } catch {
+      // skip this section
+    }
+  }
+
+  return { html: result, changes };
+}
+
+async function fixKeywordDensity(html: string, keyword: string): Promise<{ html: string; changes: UpdateChange[] }> {
+  // Split into paragraphs, send each to Claude for keyword insertion
+  const pTagRe = /<p[^>]*>([\s\S]*?)<\/p>/gi;
+  const paragraphs: { full: string; inner: string }[] = [];
+  let match;
+  while ((match = pTagRe.exec(html)) !== null) {
+    paragraphs.push({ full: match[0], inner: match[1] });
+  }
+
+  // Only process paragraphs that don't have the keyword
+  const kw = keyword.toLowerCase();
+  const toFix = paragraphs.filter((p) => !p.inner.toLowerCase().includes(kw)).slice(0, 5);
+
+  const changes: UpdateChange[] = [];
+  let result = html;
+
+  for (const para of toFix) {
+    const wordCount = para.inner.split(/\s+/).filter(Boolean).length;
+    if (wordCount < 20) continue; // skip short paragraphs
+
+    const SYSTEM = `You are an SEO editor. Insert the target keyword naturally into the paragraph once. Keep the same meaning and tone. Return ONLY the updated <p> tag.`;
+    const prompt = `Insert the keyword "${keyword}" naturally into this paragraph once.
+Return ONLY the updated paragraph HTML.
+
+PARAGRAPH:
+${para.full}`;
+
+    try {
+      const updated = await callClaude(SYSTEM, prompt, 256);
+      const cleaned = updated.replace(/^```(?:html)?\s*/i, '').replace(/```\s*$/, '').trim();
+      if (cleaned.startsWith('<p') && cleaned.includes('</p>')) {
+        result = result.replace(para.full, cleaned);
+        changes.push({ type: 'fix_keyword_density', description: `Inserted "${keyword}" into paragraph` });
+      }
+    } catch {
+      // skip
+    }
+  }
+
+  return { html: result, changes };
+}
+
+async function addInternalLinks(html: string, keyword: string): Promise<{ html: string; changes: UpdateChange[] }> {
+  const SYSTEM = `You are an SEO specialist. Add 5-8 internal links to salesrobot.co pages within the blog HTML. Use realistic anchor text and link to /blog/, /features/, /pricing/, /vs/, /integrations/. Return ONLY the modified HTML.`;
+  const prompt = `Add 5-8 internal links to salesrobot.co in this blog post. Place them naturally within existing text as <a href="/[path]">[anchor text]</a>. Primary keyword: ${keyword}
 
 HTML:
 ${html.slice(0, 8000)}`;
+
   const result = await callClaude(SYSTEM, prompt, 4096);
-  return result.replace(/^```(?:html)?\s*/i, '').replace(/```\s*$/, '').trim();
+  const cleaned = result.replace(/^```(?:html)?\s*/i, '').replace(/```\s*$/, '').trim();
+  return { html: cleaned, changes: [{ type: 'add_internal_links', description: 'Added internal links to salesrobot.co' }] };
 }
 
-async function applyAddInternalLinks(html: string, keyword: string): Promise<string> {
-  const SYSTEM = `You are an SEO specialist. Add 5-8 internal links to salesrobot.co pages within the blog post HTML. Use realistic anchor text and link to: /blog/, /features/, /pricing/, /vs/, /integrations/. Return ONLY the modified HTML.`;
-  const prompt = `Add 5-8 internal links to salesrobot.co in this blog post. Place them naturally within existing text as <a href="/[path]">[anchor text]</a>. The primary keyword is: ${keyword}
+async function addExternalLinks(html: string, keyword: string): Promise<{ html: string; changes: UpdateChange[] }> {
+  const SYSTEM = `You are an SEO specialist. Add 5-8 external links to authoritative third-party sources (LinkedIn, G2, Capterra, Forbes, HubSpot, etc.) within the blog HTML. Use natural anchor text. Return ONLY the modified HTML.`;
+  const prompt = `Add 5-8 external links to authoritative sources in this blog post. Primary keyword: ${keyword}
 
 HTML:
 ${html.slice(0, 8000)}`;
+
   const result = await callClaude(SYSTEM, prompt, 4096);
-  return result.replace(/^```(?:html)?\s*/i, '').replace(/```\s*$/, '').trim();
+  const cleaned = result.replace(/^```(?:html)?\s*/i, '').replace(/```\s*$/, '').trim();
+  return { html: cleaned, changes: [{ type: 'add_external_links', description: 'Added external authority links' }] };
 }
 
-async function applyAddExternalLinks(html: string, keyword: string): Promise<string> {
-  const SYSTEM = `You are an SEO specialist. Add 5-8 external links to authoritative third-party sources (LinkedIn, G2, Capterra, Forbes, HubSpot, etc.) within the blog post HTML. Use natural anchor text. Return ONLY the modified HTML.`;
-  const prompt = `Add 5-8 external links to authoritative sources in this blog post. Link to real authoritative domains like linkedin.com, g2.com, capterra.com, hubspot.com using natural anchor text. The primary keyword is: ${keyword}
+function fixParagraphLength(html: string): { html: string; changes: UpdateChange[] } {
+  const changes: UpdateChange[] = [];
+  let result = html;
+  const re = /<p[^>]*>([\s\S]*?)<\/p>/gi;
+  let match;
+  const replacements: { from: string; to: string }[] = [];
 
-HTML:
-${html.slice(0, 8000)}`;
-  const result = await callClaude(SYSTEM, prompt, 4096);
-  return result.replace(/^```(?:html)?\s*/i, '').replace(/```\s*$/, '').trim();
+  while ((match = re.exec(html)) !== null) {
+    const full = match[0];
+    const inner = match[1];
+    const words = inner.replace(/<[^>]+>/g, ' ').split(/\s+/).filter(Boolean);
+    if (words.length > 30) {
+      const mid = Math.ceil(words.length / 2);
+      // Find a split point in the actual inner HTML around the midpoint
+      const sentences = inner.split(/(?<=[.!?])\s+/);
+      if (sentences.length > 1) {
+        const half = Math.ceil(sentences.length / 2);
+        const p1 = sentences.slice(0, half).join(' ');
+        const p2 = sentences.slice(half).join(' ');
+        if (p2.trim()) {
+          const tag = full.match(/^<p([^>]*)>/)?.[1] || '';
+          const replacement = `<p${tag}>${p1}</p>\n<p${tag}>${p2}</p>`;
+          replacements.push({ from: full, to: replacement });
+          changes.push({ type: 'fix_paragraph_length', description: `Split paragraph of ${words.length} words` });
+        }
+      } else {
+        // No sentence boundaries — split by word count
+        const text = inner.replace(/<[^>]+>/g, ' ');
+        const wordsArr = text.split(/\s+/).filter(Boolean);
+        const p1 = wordsArr.slice(0, mid).join(' ');
+        const p2 = wordsArr.slice(mid).join(' ');
+        const tag = full.match(/^<p([^>]*)>/)?.[1] || '';
+        replacements.push({ from: full, to: `<p${tag}>${p1}</p>\n<p${tag}>${p2}</p>` });
+        changes.push({ type: 'fix_paragraph_length', description: `Split paragraph of ${words.length} words` });
+      }
+    }
+  }
+
+  for (const r of replacements) {
+    result = result.replace(r.from, r.to);
+  }
+
+  return { html: result, changes };
 }
 
-async function applyFixKeywordDensity(html: string, keyword: string): Promise<string> {
-  const SYSTEM = `You are an SEO content writer. Adjust the keyword density in this blog post to be between 1-2%. Add or naturally rephrase sentences to include the target keyword more frequently. Do not keyword-stuff. Return ONLY the modified HTML.`;
-  const prompt = `Adjust the keyword density for "${keyword}" to be 1-2% in this blog post. The keyword should appear naturally every 100-150 words. Add the keyword where it fits naturally without disrupting readability.
+async function addFaq(html: string, keyword: string): Promise<{ html: string; changes: UpdateChange[] }> {
+  const SYSTEM = `You are an SEO content writer. Generate a FAQ section with 4-5 questions and answers. Format: <h2>Frequently Asked Questions</h2> followed by <h3>Q?</h3><p>A.</p> pairs. Return ONLY the FAQ HTML fragment.`;
+  const prompt = `Generate a FAQ section for a blog about "${keyword}". 4-5 relevant questions with concise answers. Return ONLY the HTML fragment.`;
 
-HTML:
-${html.slice(0, 8000)}`;
-  const result = await callClaude(SYSTEM, prompt, 4096);
-  return result.replace(/^```(?:html)?\s*/i, '').replace(/```\s*$/, '').trim();
+  const raw = await callClaude(SYSTEM, prompt, 1024);
+  const faqHtml = raw.replace(/^```(?:html)?\s*/i, '').replace(/```\s*$/, '').trim();
+
+  let result = html;
+  // Insert before last </section>, </article>, or append
+  if (/<\/article>/i.test(result)) {
+    result = result.replace(/<\/article>/i, `\n${faqHtml}\n</article>`);
+  } else if (/<\/body>/i.test(result)) {
+    result = result.replace(/<\/body>/i, `\n${faqHtml}\n</body>`);
+  } else {
+    result = result + '\n' + faqHtml;
+  }
+
+  return { html: result, changes: [{ type: 'add_faq', description: 'Added FAQ section' }] };
 }
 
-async function applyFixFacts(html: string, keyword: string): Promise<string> {
-  const SYSTEM = `You are a fact-checker. Update any outdated statistics, data points, or facts in this blog post. Replace old/vague stats with current, specific ones from reputable sources. Return ONLY the modified HTML.`;
-  const prompt = `Update outdated facts and statistics in this blog post about ${keyword}. Replace any vague or outdated data points with specific current statistics. Keep all other content the same.
-
-HTML:
-${html.slice(0, 8000)}`;
-  const result = await callClaude(SYSTEM, prompt, 4096);
-  return result.replace(/^```(?:html)?\s*/i, '').replace(/```\s*$/, '').trim();
-}
-
-async function applyAddFaq(html: string, keyword: string): Promise<string> {
-  const SYSTEM = `You are an SEO content writer. Add a FAQ section with 4-5 questions and answers related to the blog topic. Format it as <h2>Frequently Asked Questions</h2> followed by <h3>Question?</h3><p>Answer.</p> pairs. Return the full HTML with the FAQ section appended before the closing </article> or at the end.`;
-  const prompt = `Add a FAQ section to this blog post about "${keyword}". Generate 4-5 relevant questions that users commonly ask about this topic, with concise, helpful answers. Append the FAQ before the last section of the article.
-
-HTML:
-${html.slice(0, 8000)}`;
-  const result = await callClaude(SYSTEM, prompt, 4096);
-  return result.replace(/^```(?:html)?\s*/i, '').replace(/```\s*$/, '').trim();
-}
-
-async function applyFixMetaTags(html: string, keyword: string): Promise<string> {
-  // For meta tags, we inject/update the <title> and meta description in the HTML head
-  const SYSTEM = `You are an SEO specialist. Optimize the title and meta description for this blog post. The title should be under 60 chars, include the primary keyword, and be compelling. The description should be 120-150 chars with the keyword. Return JSON: { "title": "...", "description": "..." }`;
-  const prompt = `Generate an optimized title and meta description for a blog post about: ${keyword}
-
-Current HTML (first 2000 chars for context):
-${html.slice(0, 2000)}`;
+async function fixMetaTags(html: string, keyword: string): Promise<{ html: string; changes: UpdateChange[] }> {
+  const SYSTEM = `You are an SEO specialist. Generate an optimized title (under 60 chars, includes keyword) and meta description (120-150 chars, includes keyword). Return JSON: { "title": "...", "description": "..." }`;
+  const prompt = `Generate SEO-optimized title and meta description for: ${keyword}\n\nContext (first 500 chars):\n${html.slice(0, 500)}`;
 
   const raw = await callClaude(SYSTEM, prompt, 256);
   const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
   const meta = JSON.parse(cleaned) as { title: string; description: string };
 
-  // Inject/replace meta tags in HTML
   let result = html;
   if (/<title>/i.test(result)) {
     result = result.replace(/<title>[^<]*<\/title>/i, `<title>${meta.title}</title>`);
@@ -120,51 +266,57 @@ ${html.slice(0, 2000)}`;
     result = result.replace(/<head>/i, `<head>\n<title>${meta.title}</title>`);
   }
   if (/<meta\s+name="description"/i.test(result)) {
-    result = result.replace(
-      /<meta\s+name="description"\s+content="[^"]*"\s*\/?>/i,
-      `<meta name="description" content="${meta.description}" />`
-    );
+    result = result.replace(/<meta\s+name="description"\s+content="[^"]*"\s*\/?>/i, `<meta name="description" content="${meta.description}" />`);
   } else if (/<head>/i.test(result)) {
-    result = result.replace(
-      /<head>/i,
-      `<head>\n<meta name="description" content="${meta.description}" />`
-    );
+    result = result.replace(/<head>/i, `<head>\n<meta name="description" content="${meta.description}" />`);
   }
-  return result;
+
+  return { html: result, changes: [{ type: 'fix_meta_tags', description: `Updated title and meta description`, after: `${meta.title} | ${meta.description}` }] };
+}
+
+async function optimizeGscKeywords(html: string, gscKeywords: GSCKeyword[]): Promise<{ html: string; changes: UpdateChange[] }> {
+  if (!gscKeywords || gscKeywords.length === 0) return { html, changes: [] };
+
+  const missing = findMissingKeywords(gscKeywords, html).slice(0, 10);
+  if (missing.length === 0) return { html, changes: [] };
+
+  const SYSTEM = `You are an SEO content optimizer. Insert the provided keywords naturally into the blog HTML, max 2-3 per section. Keep all existing content intact. Return ONLY the modified HTML.`;
+  const prompt = `Insert these keywords naturally into the blog, max 2-3 per section, without disrupting readability:
+${missing.map((k) => `- ${k.query} (${k.impressions} impressions)`).join('\n')}
+
+HTML:
+${html.slice(0, 8000)}`;
+
+  const result = await callClaude(SYSTEM, prompt, 4096);
+  const cleaned = result.replace(/^```(?:html)?\s*/i, '').replace(/```\s*$/, '').trim();
+  return {
+    html: cleaned,
+    changes: [{ type: 'optimize_gsc_keywords', description: `Inserted ${missing.length} GSC keyword(s) naturally` }],
+  };
 }
 
 // ─── Fix dispatcher ───────────────────────────────────────────────────────────
 
-const FIX_LABELS: Record<FixId, string> = {
-  update_year: 'Updating year references…',
-  fix_paragraph_length: 'Splitting long paragraphs…',
+const FIX_LABELS: Record<string, string> = {
+  fix_outdated_facts: 'Fixing outdated facts…',
+  update_years: 'Updating year references…',
+  add_missing_sections: 'Adding missing sections…',
+  fix_keyword_density: 'Adjusting keyword density…',
   add_internal_links: 'Adding internal links…',
   add_external_links: 'Adding external links…',
-  fix_keyword_density: 'Adjusting keyword density…',
-  fix_facts: 'Updating facts & statistics…',
-  add_faq: 'Adding FAQ section…',
+  fix_paragraph_length: 'Splitting long paragraphs…',
   fix_meta_tags: 'Optimizing meta tags…',
+  add_faq: 'Adding FAQ section…',
+  optimize_gsc_keywords: 'Optimizing GSC keywords…',
 };
-
-async function applyFix(id: FixId, html: string, keyword: string): Promise<string> {
-  switch (id) {
-    case 'update_year': return applyUpdateYear(html);
-    case 'fix_paragraph_length': return applyFixParagraphLength(html, keyword);
-    case 'add_internal_links': return applyAddInternalLinks(html, keyword);
-    case 'add_external_links': return applyAddExternalLinks(html, keyword);
-    case 'fix_keyword_density': return applyFixKeywordDensity(html, keyword);
-    case 'fix_facts': return applyFixFacts(html, keyword);
-    case 'add_faq': return applyAddFaq(html, keyword);
-    case 'fix_meta_tags': return applyFixMetaTags(html, keyword);
-    default: return html;
-  }
-}
 
 // ─── SSE Route ────────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
-  const body = await req.json() as ApplyRequest;
-  const { originalHtml, originalText: _originalText, selectedFixes, keyword, url: _url } = body;
+  const body = (await req.json()) as ApplyRequest;
+  const { original_html, webflow_item_id, selected_fixes, keyword_data, gsc_keywords, outdated_facts, missing_sections } = body;
+
+  const keyword = keyword_data?.primaryKeyword || 'blog';
 
   const encoder = new TextEncoder();
   let controllerClosed = false;
@@ -174,12 +326,8 @@ export async function POST(req: NextRequest) {
       const send = (event: string, data: unknown) => {
         if (controllerClosed) return;
         try {
-          controller.enqueue(
-            encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)
-          );
-        } catch {
-          // ignore
-        }
+          controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+        } catch { /* ignore */ }
       };
 
       const close = () => {
@@ -190,8 +338,9 @@ export async function POST(req: NextRequest) {
       };
 
       try {
-        let workingHtml = originalHtml;
-        const fixes = (selectedFixes || []).filter((f): f is FixId => f in FIX_LABELS);
+        let workingHtml = original_html;
+        const fixes = (selected_fixes || []).filter((f) => f in FIX_LABELS);
+        const allChanges: UpdateChange[] = [];
 
         send('status', { message: `Applying ${fixes.length} fix(es)…`, total: fixes.length, done: 0 });
 
@@ -201,10 +350,47 @@ export async function POST(req: NextRequest) {
           send('status', { message: label, total: fixes.length, done: i });
 
           try {
-            const result = await applyFix(fixId, workingHtml, keyword);
-            if (result && result.length > 100) {
-              workingHtml = result;
+            let result: { html: string; changes: UpdateChange[] };
+
+            switch (fixId) {
+              case 'fix_outdated_facts':
+                result = await fixOutdatedFacts(workingHtml, outdated_facts || []);
+                break;
+              case 'update_years':
+                result = updateYears(workingHtml);
+                break;
+              case 'add_missing_sections':
+                result = await addMissingSections(workingHtml, missing_sections || [], keyword);
+                break;
+              case 'fix_keyword_density':
+                result = await fixKeywordDensity(workingHtml, keyword);
+                break;
+              case 'add_internal_links':
+                result = await addInternalLinks(workingHtml, keyword);
+                break;
+              case 'add_external_links':
+                result = await addExternalLinks(workingHtml, keyword);
+                break;
+              case 'fix_paragraph_length':
+                result = fixParagraphLength(workingHtml);
+                break;
+              case 'fix_meta_tags':
+                result = await fixMetaTags(workingHtml, keyword);
+                break;
+              case 'add_faq':
+                result = await addFaq(workingHtml, keyword);
+                break;
+              case 'optimize_gsc_keywords':
+                result = await optimizeGscKeywords(workingHtml, gsc_keywords || []);
+                break;
+              default:
+                result = { html: workingHtml, changes: [] };
             }
+
+            if (result.html && result.html.length > 100) {
+              workingHtml = result.html;
+            }
+            allChanges.push(...result.changes);
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             console.warn(`[update/apply] Fix ${fixId} failed:`, msg);
@@ -216,23 +402,33 @@ export async function POST(req: NextRequest) {
 
         // Re-score
         send('status', { message: 'Scoring updated content…', total: fixes.length, done: fixes.length });
-        const newScore = scoreContent(
-          workingHtml,
-          {
-            primaryKeyword: keyword || 'blog',
-            secondaryKeywords: [],
-            longTailKeywords: [],
-            peopleAlsoAsk: [],
-            keywordGroups: {},
-          },
-          { title: '', description: '', slug: '' }
-        );
+        const oldScore = scoreContent(original_html, {
+          primaryKeyword: keyword,
+          secondaryKeywords: keyword_data?.secondaryKeywords || [],
+          longTailKeywords: keyword_data?.longTailKeywords || [],
+          peopleAlsoAsk: keyword_data?.peopleAlsoAsk || [],
+          keywordGroups: keyword_data?.keywordGroups || {},
+        }, { title: '', description: '', slug: '' });
+
+        const newScore = scoreContent(workingHtml, {
+          primaryKeyword: keyword,
+          secondaryKeywords: keyword_data?.secondaryKeywords || [],
+          longTailKeywords: keyword_data?.longTailKeywords || [],
+          peopleAlsoAsk: keyword_data?.peopleAlsoAsk || [],
+          keywordGroups: keyword_data?.keywordGroups || {},
+        }, { title: '', description: '', slug: '' });
 
         send('complete', {
-          updatedHtml: workingHtml,
-          score: newScore,
-          fixesApplied: fixes,
+          updated_html: workingHtml,
+          old_score: oldScore.overall,
+          new_score: newScore.overall,
+          changes_made: allChanges,
         });
+
+        // Push to Webflow if item id provided
+        if (webflow_item_id) {
+          send('webflow_ready', { item_id: webflow_item_id, message: 'Content ready to publish to Webflow' });
+        }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.error('[update/apply] Fatal error:', msg);

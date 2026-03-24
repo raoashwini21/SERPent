@@ -106,3 +106,54 @@ export interface GenerationEvent {
   event: string;
   data: unknown;
 }
+
+// ─── Webflow ──────────────────────────────────────────────────────────────────
+
+export interface WebflowBlog {
+  id: string;
+  title: string;
+  slug: string;
+  metaTitle: string;
+  metaDescription: string;
+  excerpt: string;
+  postBody: string;
+  publishedAt: string;
+}
+
+export interface WebflowBlogUpdate {
+  postBody?: string;
+  metaTitle?: string;
+  metaDescription?: string;
+  excerpt?: string;
+}
+
+// ─── GSC ─────────────────────────────────────────────────────────────────────
+
+export interface GSCKeyword {
+  query: string;
+  clicks: number;
+  impressions: number;
+  ctr: number;
+  position: number;
+}
+
+// ─── Blog Update Analysis ─────────────────────────────────────────────────────
+
+export interface UpdateChange {
+  type: string;
+  description: string;
+  before?: string;
+  after?: string;
+}
+
+export interface BlogUpdateAnalysis {
+  currentScore: number;
+  contentIssues: string[];
+  seoIssues: string[];
+  suggestedFixes: string[];
+  missingSections: string[];
+  keywordGaps: string[];
+  gscQuickWins?: GSCKeyword[];
+  gscMissing?: GSCKeyword[];
+  webflowItemId?: string;
+}

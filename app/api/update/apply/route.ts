@@ -1,7 +1,6 @@
 import { NextRequest } from 'next/server';
 import { callClaude } from '../../../../lib/claude';
 import { scoreContent } from '../../../../lib/seo/content-scorer';
-import { updateBlogContent } from '../../../../lib/webflow';
 import { findMissingKeywords } from '../../../../lib/gsc-parser';
 import type { GSCKeyword, UpdateChange } from '../../../../lib/types';
 

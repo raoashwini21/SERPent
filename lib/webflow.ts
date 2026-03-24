@@ -1,3 +1,5 @@
+import type { WebflowBlog, WebflowBlogUpdate } from './types';
+
 const WEBFLOW_API_BASE = 'https://api.webflow.com/v2';
 
 function getToken(): string {
@@ -41,8 +43,6 @@ interface WebflowListResponse {
   };
 }
 
-import type { WebflowBlog, WebflowBlogUpdate } from './types';
-
 function mapItem(item: WebflowItem): WebflowBlog {
   return {
     id: item.id,
@@ -54,6 +54,20 @@ function mapItem(item: WebflowItem): WebflowBlog {
     postBody: item.fieldData['post-body'] || '',
     publishedAt: item.lastPublished || '',
   };
+}
+
+export async function fetchBlogById(itemId: string): Promise<WebflowBlog | null> {
+  const collectionId = getCollectionId();
+  const url = `${WEBFLOW_API_BASE}/collections/${collectionId}/items/${itemId}`;
+
+  const response = await fetch(url, { headers: makeHeaders() });
+  if (!response.ok) {
+    console.warn(`[webflow] fetchBlogById HTTP ${response.status} for id="${itemId}"`);
+    return null;
+  }
+
+  const item = (await response.json()) as WebflowItem;
+  return mapItem(item);
 }
 
 export async function fetchBlogBySlug(slug: string): Promise<WebflowBlog | null> {

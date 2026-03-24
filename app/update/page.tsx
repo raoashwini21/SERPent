@@ -4,7 +4,7 @@ import { useState, useRef } from 'react';
 import DiffView from '../../components/DiffView';
 import SeoScoreDashboard from '../../components/SeoScoreDashboard';
 import { useToast } from '../../components/Toast';
-import type { SEOScore } from '../../lib/types';
+import type { SEOScore, BlogUpdateAnalysis } from '../../lib/types';
 
 type UpdateState = 'idle' | 'analyzing' | 'suggestions' | 'updating' | 'complete';
 
@@ -19,10 +19,13 @@ interface UpdateIssue {
 interface AnalyzeResult {
   originalHtml: string;
   originalText: string;
-  score: SEOScore;
+  analysis: BlogUpdateAnalysis;
   issues: UpdateIssue[];
   wordCount: number;
-  url: string;
+  sourceUrl?: string;
+  webflowItemId?: string;
+  metaTitle?: string;
+  metaDescription?: string;
 }
 
 interface StatusEvent {
@@ -41,7 +44,7 @@ export default function UpdateBlogPage() {
   const { toast } = useToast();
 
   const [state, setState] = useState<UpdateState>('idle');
-  const [url, setUrl] = useState('');
+  const [blogUrl, setBlogUrl] = useState('');
   const [keyword, setKeyword] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
 
@@ -57,7 +60,6 @@ export default function UpdateBlogPage() {
 
   // Refs for stream recovery
   const completeReceivedRef = useRef(false);
-  const updatedHtmlRef = useRef('');
 
   function toggleIssue(id: string) {
     setIssues((prev) => prev.map((i) => i.id === id ? { ...i, selected: !i.selected } : i));
@@ -73,7 +75,7 @@ export default function UpdateBlogPage() {
 
   async function handleAnalyze(e: React.FormEvent) {
     e.preventDefault();
-    if (!url.trim()) return;
+    if (!blogUrl.trim()) return;
 
     setState('analyzing');
     setErrorMsg('');
@@ -86,7 +88,10 @@ export default function UpdateBlogPage() {
       const res = await fetch('/api/update/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: url.trim(), keyword: keyword.trim() }),
+        body: JSON.stringify({
+          blog_url: blogUrl.trim(),
+          primary_keyword: keyword.trim() || undefined,
+        }),
       });
 
       if (!res.ok) {
@@ -118,7 +123,6 @@ export default function UpdateBlogPage() {
     setState('updating');
     setProgressLog([]);
     completeReceivedRef.current = false;
-    updatedHtmlRef.current = '';
 
     try {
       const res = await fetch('/api/update/apply', {
@@ -126,10 +130,12 @@ export default function UpdateBlogPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           originalHtml: analyzeResult.originalHtml,
-          originalText: analyzeResult.originalText,
+          webflow_item_id: analyzeResult.webflowItemId,
           selectedFixes: selected,
-          keyword: keyword.trim() || analyzeResult.url,
-          url: analyzeResult.url,
+          keyword: keyword.trim() || analyzeResult.sourceUrl || 'blog',
+          analysis: analyzeResult.analysis,
+          metaTitle: analyzeResult.metaTitle,
+          metaDescription: analyzeResult.metaDescription,
         }),
       });
 
@@ -167,9 +173,8 @@ export default function UpdateBlogPage() {
               setProgressLog((prev) => [...prev, `⚠ ${ev.id} failed: ${ev.message}`]);
               toast(`Fix "${ev.id}" failed — continuing`, 'warning');
             } else if (eventName === 'complete') {
-              const ev = parsed as { updatedHtml: string; score: SEOScore; fixesApplied: string[] };
+              const ev = parsed as { updatedHtml: string; score: SEOScore };
               completeReceivedRef.current = true;
-              updatedHtmlRef.current = ev.updatedHtml;
               setUpdatedHtml(ev.updatedHtml);
               setNewScore(ev.score);
               setState('complete');
@@ -213,7 +218,7 @@ export default function UpdateBlogPage() {
 
   function handleReset() {
     setState('idle');
-    setUrl('');
+    setBlogUrl('');
     setKeyword('');
     setAnalyzeResult(null);
     setIssues([]);
@@ -226,6 +231,7 @@ export default function UpdateBlogPage() {
 
   const showDiff = (state === 'complete') && analyzeResult && updatedHtml;
   const selectedCount = issues.filter((i) => i.selected).length;
+  const currentScore = analyzeResult?.analysis?.currentScore;
 
   return (
     <div className="flex h-screen overflow-hidden" style={{ backgroundColor: '#F9FAFB' }}>
@@ -262,8 +268,8 @@ export default function UpdateBlogPage() {
                 <input
                   type="url"
                   placeholder="https://salesrobot.co/blog/your-post"
-                  value={url}
-                  onChange={(e) => setUrl(e.target.value)}
+                  value={blogUrl}
+                  onChange={(e) => setBlogUrl(e.target.value)}
                   required
                   disabled={state === 'analyzing'}
                   className="w-full px-3 py-2.5 text-sm border border-gray-200 rounded-xl outline-none transition-all focus:border-purple-400 focus:ring-2"
@@ -293,7 +299,7 @@ export default function UpdateBlogPage() {
 
               <button
                 type="submit"
-                disabled={state === 'analyzing' || !url.trim()}
+                disabled={state === 'analyzing' || !blogUrl.trim()}
                 className="w-full py-2.5 rounded-xl text-sm font-semibold text-white transition-opacity disabled:opacity-60 btn-press"
                 style={{ backgroundColor: '#6C5CE7' }}
               >
@@ -313,7 +319,15 @@ export default function UpdateBlogPage() {
           {(state === 'suggestions' || state === 'complete') && analyzeResult && (
             <div className="space-y-4 animate-slide-in-left">
               {/* Current score */}
-              <SeoScoreDashboard score={analyzeResult.score} />
+              {currentScore && <SeoScoreDashboard score={currentScore} />}
+
+              {/* Webflow badge */}
+              {analyzeResult.webflowItemId && (
+                <div className="flex items-center gap-2 text-xs text-purple-700 bg-purple-50 border border-purple-200 rounded-xl px-3 py-2">
+                  <span>✓</span>
+                  <span>Webflow item found — changes can be published directly</span>
+                </div>
+              )}
 
               {/* Issue list */}
               <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
@@ -365,7 +379,12 @@ export default function UpdateBlogPage() {
               {/* Word count */}
               <div className="flex items-center gap-2 text-xs text-gray-500 px-1">
                 <span>📄</span>
-                <span>{analyzeResult.wordCount.toLocaleString()} words · {analyzeResult.url.replace(/^https?:\/\//, '').slice(0, 40)}</span>
+                <span>
+                  {analyzeResult.wordCount.toLocaleString()} words
+                  {analyzeResult.sourceUrl && (
+                    <> · {analyzeResult.sourceUrl.replace(/^https?:\/\//, '').slice(0, 40)}</>
+                  )}
+                </span>
               </div>
 
               {errorMsg && (
@@ -464,16 +483,16 @@ export default function UpdateBlogPage() {
       {/* ── RIGHT PANEL ────────────────────────────────────────────────────── */}
       <div className="flex-1 flex flex-col h-screen overflow-hidden">
         {/* Score comparison when complete */}
-        {state === 'complete' && newScore && analyzeResult && (
+        {state === 'complete' && newScore && currentScore && (
           <div className="shrink-0 border-b border-gray-200 bg-white px-5 py-3">
             <div className="flex items-center gap-6">
               <div className="flex items-center gap-2">
                 <span className="text-xs text-gray-500">Before</span>
                 <span
                   className="text-lg font-bold"
-                  style={{ color: analyzeResult.score.overall >= 70 ? '#22C55E' : analyzeResult.score.overall >= 50 ? '#F59E0B' : '#EF4444' }}
+                  style={{ color: currentScore.overall >= 70 ? '#22C55E' : currentScore.overall >= 50 ? '#F59E0B' : '#EF4444' }}
                 >
-                  {analyzeResult.score.overall}%
+                  {currentScore.overall}%
                 </span>
               </div>
               <span className="text-gray-300">→</span>
@@ -485,9 +504,9 @@ export default function UpdateBlogPage() {
                 >
                   {newScore.overall}%
                 </span>
-                {newScore.overall > analyzeResult.score.overall && (
+                {newScore.overall > currentScore.overall && (
                   <span className="text-xs font-semibold" style={{ color: '#22C55E' }}>
-                    +{newScore.overall - analyzeResult.score.overall}%
+                    +{newScore.overall - currentScore.overall}%
                   </span>
                 )}
               </div>

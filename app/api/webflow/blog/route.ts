@@ -1,18 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { fetchBlogBySlug } from '../../../../lib/webflow';
+import { fetchBlogBySlug, fetchBlogById } from '../../../../lib/webflow';
 
 export async function GET(req: NextRequest) {
   const slug = req.nextUrl.searchParams.get('slug');
-  if (!slug) {
-    return NextResponse.json({ error: 'slug query param is required' }, { status: 400 });
+  const id = req.nextUrl.searchParams.get('id');
+
+  if (!slug && !id) {
+    return NextResponse.json({ error: 'slug or id query param is required' }, { status: 400 });
   }
 
   try {
-    const blog = await fetchBlogBySlug(slug);
+    const blog = slug ? await fetchBlogBySlug(slug) : await fetchBlogById(id!);
     if (!blog) {
       return NextResponse.json({ error: 'Blog not found' }, { status: 404 });
     }
-    return NextResponse.json(blog);
+    return NextResponse.json({ blog });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('[webflow/blog] Error:', msg);

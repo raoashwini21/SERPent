@@ -4,26 +4,16 @@ import { validateFormatting } from './formatting-validator';
 
 // ─── Default score returned when the scorer itself fails ─────────────────────
 
-const DEFAULT_SCORE: SEOScore = {
-  overall: 0,
-  checks: [],
-  suggestions: ['SEO scoring failed — please retry'],
-};
 
 // ─── Safe check wrapper ───────────────────────────────────────────────────────
 
-function safeCheck(fn: () => SEOCheck): SEOCheck {
+function safeCheck(name: string, category: string, checkFn: () => SEOCheck): SEOCheck {
   try {
-    return fn();
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.warn('[scorer] check threw:', msg);
-    return {
-      category: 'Error',
-      name: 'Check Error',
-      status: 'fail',
-      detail: `Check errored: ${msg}`,
-    };
+    return checkFn();
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn(`[scorer] check "${name}" threw:`, msg);
+    return { name, category, status: 'fail' as const, detail: 'Check errored: ' + msg };
   }
 }
 
@@ -122,20 +112,25 @@ function checkUrlSlug(slug: string, primaryKeyword: string): SEOCheck {
 }
 
 function checkKeywordDensity(html: string, primaryKeyword: string): SEOCheck {
-  const plain = stripHtml(html);
-  const totalWords = countWords(plain);
+  // Strip HTML tags first, then count using indexOf to avoid any regex crash risk
+  const text = html.replace(/<[^>]*>/g, ' ').toLowerCase();
+  const totalWords = countWords(text);
   if (totalWords === 0) {
     return { category: 'Keyword Placement', name: 'Keyword Density', status: 'fail', detail: 'No content found' };
   }
-  const kwWords = normalizeKw(primaryKeyword).split(/\s+/);
-  const text = plain.toLowerCase();
-  const pattern = kwWords.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+');
-  const regex = new RegExp(pattern, 'gi');
-  const matches = text.match(regex);
-  const count = matches ? matches.length : 0;
+  const keyword = (primaryKeyword || '').toLowerCase().replace(/[^a-z0-9\s]/g, '').trim();
+  if (!keyword) {
+    return { category: 'Keyword Placement', name: 'Keyword Density', status: 'warn', detail: 'No keyword to measure' };
+  }
+  // Simple indexOf loop — no RegExp, no crash risk
+  let count = 0;
+  let pos = 0;
+  while ((pos = text.indexOf(keyword, pos)) !== -1) {
+    count++;
+    pos += keyword.length;
+  }
   const density = (count / totalWords) * 100;
-  const inRange = density >= 1 && density <= 2;
-  const status = inRange ? 'pass' : density < 0.5 ? 'fail' : 'warn';
+  const status = density >= 1 && density <= 2.5 ? 'pass' : density >= 0.5 ? 'warn' : 'fail';
   return {
     category: 'Keyword Placement',
     name: 'Keyword Density',
@@ -148,16 +143,21 @@ function checkSecondaryKeywords(
   html: string,
   secondaryKeywords: KeywordData['secondaryKeywords']
 ): SEOCheck {
-  const plain = stripHtml(html).toLowerCase();
-  const safeKws = secondaryKeywords || [];
-  const top5 = safeKws.slice(0, 5);
-  const found = top5.filter((k) => plain.includes(normalizeKw(k.keyword)));
+  const text = html.replace(/<[^>]*>/g, ' ').toLowerCase();
+  const safeKws = (secondaryKeywords || []).slice(0, 5);
+  if (safeKws.length === 0) {
+    return { category: 'Keyword Placement', name: 'Secondary Keywords Present', status: 'warn', detail: 'No secondary keywords defined' };
+  }
+  const found = safeKws.filter((k) => {
+    const kw = ((k && k.keyword) || '').toLowerCase().replace(/[^a-z0-9\s]/g, '').trim();
+    return kw.length > 0 && text.includes(kw);
+  });
   const pass = found.length >= 4;
   return {
     category: 'Keyword Placement',
     name: 'Secondary Keywords Present',
     status: pass ? 'pass' : found.length >= 2 ? 'warn' : 'fail',
-    detail: `${found.length}/${top5.length} secondary keywords found in content`,
+    detail: `${found.length}/${safeKws.length} secondary keywords found in content`,
   };
 }
 
@@ -226,29 +226,27 @@ function checkHeadingDensity(html: string): SEOCheck {
 }
 
 function checkReadability(html: string): SEOCheck {
-  const text = stripHtml(html);
+  // Simple avg-words-per-sentence heuristic — no external library needed
+  const text = html.replace(/<[^>]*>/g, ' ');
   const sentences = text.split(/[.!?]+/).filter((s) => s.trim().length > 5);
-  const words = text.split(/\s+/).filter((w) => w.length > 0);
-  if (!sentences.length || !words.length) {
+  const wordCount = countWords(text);
+  if (!sentences.length || !wordCount) {
     return { category: 'Content Structure', name: 'Readability', status: 'warn', detail: 'Could not calculate readability' };
   }
-  const longWords = words.filter((w) => w.length > 6).length;
-  const complexRatio = longWords / words.length;
-  const avgSentenceLen = words.length / sentences.length;
-  const grade = complexRatio * 20 + avgSentenceLen * 0.3;
-  const pass = grade <= 8;
+  const avgWordsPerSentence = wordCount / sentences.length;
+  const status = avgWordsPerSentence <= 20 ? 'pass' : avgWordsPerSentence <= 25 ? 'warn' : 'fail';
   return {
     category: 'Content Structure',
     name: 'Readability',
-    status: pass ? 'pass' : grade <= 11 ? 'warn' : 'fail',
-    detail: `Estimated readability grade ~${grade.toFixed(1)} — target Grade 8 or below`,
+    status,
+    detail: `~${avgWordsPerSentence.toFixed(1)} words/sentence — target under 20`,
   };
 }
 
 // ─── Technical SEO Checks ────────────────────────────────────────────────────
 
 function checkFAQSchema(html: string): SEOCheck {
-  const has = html.includes('"@type": "FAQPage"') || html.includes('"@type":"FAQPage"');
+  const has = html.includes('FAQPage');
   return {
     category: 'Technical SEO',
     name: 'FAQ Schema (JSON-LD)',
@@ -258,7 +256,7 @@ function checkFAQSchema(html: string): SEOCheck {
 }
 
 function checkArticleSchema(html: string): SEOCheck {
-  const has = html.includes('"@type": "Article"') || html.includes('"@type":"Article"');
+  const has = html.includes('"Article"') || html.includes("'Article'");
   return {
     category: 'Technical SEO',
     name: 'Article Schema (JSON-LD)',
@@ -285,25 +283,30 @@ function checkImageAltTexts(html: string): SEOCheck {
 // ─── Links Checks ────────────────────────────────────────────────────────────
 
 function checkInternalLinks(html: string): SEOCheck {
-  const internal = (html.match(/href=["']\/[^"']+["']/gi) ?? []).length +
-    (html.match(/href=["']https?:\/\/(?:www\.)?salesrobot\.co[^"']*["']/gi) ?? []).length;
-  const pass = internal >= 5 && internal <= 8;
+  // Count hrefs containing salesrobot.co or starting with /
+  const allHrefs = (html.match(/href=["'][^"']+["']/gi) ?? []);
+  const internal = allHrefs.filter((h) => {
+    const lower = h.toLowerCase();
+    return lower.includes('salesrobot.co') || /href=["']\//.test(h);
+  }).length;
+  const status = internal >= 5 ? 'pass' : internal >= 2 ? 'warn' : 'fail';
   return {
     category: 'Links',
     name: 'Internal Links',
-    status: pass ? 'pass' : internal < 5 ? (internal >= 2 ? 'warn' : 'fail') : 'warn',
+    status,
     detail: `${internal} internal links found — target 5-8`,
   };
 }
 
 function checkExternalLinks(html: string): SEOCheck {
-  const allLinks = html.match(/href=["']https?:\/\/[^"']+["']/gi) ?? [];
-  const external = allLinks.filter((l) => !/salesrobot\.co/i.test(l)).length;
-  const pass = external >= 5 && external <= 8;
+  // Count external hrefs (http/https but NOT salesrobot.co)
+  const allLinks = (html.match(/href=["']https?:\/\/[^"']+["']/gi) ?? []);
+  const external = allLinks.filter((l) => !l.toLowerCase().includes('salesrobot.co')).length;
+  const status = external >= 5 ? 'pass' : external >= 2 ? 'warn' : 'fail';
   return {
     category: 'Links',
     name: 'External Links',
-    status: pass ? 'pass' : external < 5 ? (external >= 2 ? 'warn' : 'fail') : 'warn',
+    status,
     detail: `${external} external links found — target 5-8`,
   };
 }
@@ -392,73 +395,81 @@ export function scoreContent(
   keywordData: KeywordData,
   meta: { title: string; description: string; slug: string }
 ): SEOScore {
-  // Top-level defensive guards
-  if (!html) {
-    console.warn('[scorer] html is empty — returning default score');
-    return DEFAULT_SCORE;
+  console.log('[SCORER] Starting:', html?.length ?? 0, 'chars, keyword:', keywordData?.primaryKeyword ?? '(none)');
+
+  // ── Top-level defensive guards ────────────────────────────────────────────
+  if (!html || html.length < 100) {
+    console.warn('[SCORER] html is empty or too short — returning default score');
+    return { overall: 0, checks: [], suggestions: ['No HTML content to score'] };
   }
   if (!keywordData?.primaryKeyword) {
-    console.warn('[scorer] keywordData.primaryKeyword is missing — returning default score');
-    return DEFAULT_SCORE;
+    console.warn('[SCORER] keywordData.primaryKeyword is missing — returning default score');
+    return { overall: 0, checks: [], suggestions: ['No primary keyword available'] };
   }
 
-  // Ensure arrays are never undefined
+  // Normalise arrays so every check always sees proper arrays, never undefined
   const safeKeywordData: KeywordData = {
     ...keywordData,
     secondaryKeywords: keywordData.secondaryKeywords || [],
-    longTailKeywords: keywordData.longTailKeywords || [],
-    peopleAlsoAsk: keywordData.peopleAlsoAsk || [],
+    longTailKeywords:  keywordData.longTailKeywords  || [],
+    peopleAlsoAsk:     keywordData.peopleAlsoAsk     || [],
+    keywordGroups:     keywordData.keywordGroups     || {},
   };
 
   const safeMeta = {
-    title: meta?.title || '',
-    description: meta?.description || '',
-    slug: meta?.slug || '',
+    title:       meta?.title?.toLowerCase()       || '',
+    description: meta?.description                 || '',
+    slug:        meta?.slug                        || '',
   };
 
   try {
-    const bigrams = extractBigrams(html);
-    const trigrams = extractTrigrams(html);
+    const keyword = safeKeywordData.primaryKeyword;
 
     const checks: SEOCheck[] = [
-      // Keyword Placement
-      safeCheck(() => checkKeywordInTitle(safeMeta.title, safeKeywordData.primaryKeyword)),
-      safeCheck(() => checkKeywordInFirst150Words(html, safeKeywordData.primaryKeyword)),
-      safeCheck(() => checkKeywordInH1(html, safeKeywordData.primaryKeyword)),
-      safeCheck(() => checkMetaDescriptionLength(safeMeta.description)),
-      safeCheck(() => checkUrlSlug(safeMeta.slug, safeKeywordData.primaryKeyword)),
-      safeCheck(() => checkKeywordDensity(html, safeKeywordData.primaryKeyword)),
-      safeCheck(() => checkSecondaryKeywords(html, safeKeywordData.secondaryKeywords)),
+      // ── Keyword Placement ──────────────────────────────────────────────────
+      safeCheck('Keyword in Title Tag',       'Keyword Placement', () => checkKeywordInTitle(safeMeta.title, keyword)),
+      safeCheck('Keyword in First 150 Words', 'Keyword Placement', () => checkKeywordInFirst150Words(html, keyword)),
+      safeCheck('Keyword in H1',              'Keyword Placement', () => checkKeywordInH1(html, keyword)),
+      safeCheck('Meta Description Length',    'Keyword Placement', () => checkMetaDescriptionLength(safeMeta.description)),
+      safeCheck('Keyword in URL Slug',        'Keyword Placement', () => checkUrlSlug(safeMeta.slug, keyword)),
+      safeCheck('Keyword Density',            'Keyword Placement', () => checkKeywordDensity(html, keyword)),
+      safeCheck('Secondary Keywords Present', 'Keyword Placement', () => checkSecondaryKeywords(html, safeKeywordData.secondaryKeywords)),
 
-      // Content Structure
-      safeCheck(() => checkWordCount(html, 2000)),
-      safeCheck(() => checkParagraphLength(html)),
-      safeCheck(() => checkHasFAQSection(html)),
-      safeCheck(() => checkHasComparisonTable(html)),
-      safeCheck(() => checkHeadingDensity(html)),
-      safeCheck(() => checkReadability(html)),
+      // ── Content Structure ──────────────────────────────────────────────────
+      safeCheck('Word Count',       'Content Structure', () => checkWordCount(html, 2000)),
+      safeCheck('Paragraph Length', 'Content Structure', () => checkParagraphLength(html)),
+      safeCheck('FAQ Section',      'Content Structure', () => checkHasFAQSection(html)),
+      safeCheck('Comparison Table', 'Content Structure', () => checkHasComparisonTable(html)),
+      safeCheck('Heading Density',  'Content Structure', () => checkHeadingDensity(html)),
+      safeCheck('Readability',      'Content Structure', () => checkReadability(html)),
 
-      // Keyword Density
-      safeCheck(() => checkBigramAlignment(bigrams, safeKeywordData)),
-      safeCheck(() => checkTrigramAlignment(trigrams, safeKeywordData)),
+      // ── Keyword Density (bigrams/trigrams each in own safeCheck) ───────────
+      safeCheck('Top Bigram Alignment',  'Keyword Density', () => {
+        const bigrams = extractBigrams(html);
+        return checkBigramAlignment(bigrams, safeKeywordData);
+      }),
+      safeCheck('Top Trigram Alignment', 'Keyword Density', () => {
+        const trigrams = extractTrigrams(html);
+        return checkTrigramAlignment(trigrams, safeKeywordData);
+      }),
 
-      // Technical SEO
-      safeCheck(() => checkFAQSchema(html)),
-      safeCheck(() => checkArticleSchema(html)),
-      safeCheck(() => checkImageAltTexts(html)),
+      // ── Technical SEO ──────────────────────────────────────────────────────
+      safeCheck('FAQ Schema (JSON-LD)',     'Technical SEO', () => checkFAQSchema(html)),
+      safeCheck('Article Schema (JSON-LD)', 'Technical SEO', () => checkArticleSchema(html)),
+      safeCheck('Image Alt Texts',          'Technical SEO', () => checkImageAltTexts(html)),
 
-      // Links
-      safeCheck(() => checkInternalLinks(html)),
-      safeCheck(() => checkExternalLinks(html)),
+      // ── Links ──────────────────────────────────────────────────────────────
+      safeCheck('Internal Links', 'Links', () => checkInternalLinks(html)),
+      safeCheck('External Links', 'Links', () => checkExternalLinks(html)),
 
-      // CTAs & Formatting
-      safeCheck(() => checkCTACount(html)),
-      safeCheck(() => checkBoldPresent(html)),
-      safeCheck(() => checkItalicsPresent(html)),
+      // ── CTAs & Formatting ──────────────────────────────────────────────────
+      safeCheck('CTA Count',    'CTAs & Formatting', () => checkCTACount(html)),
+      safeCheck('Bold Text',    'CTAs & Formatting', () => checkBoldPresent(html)),
+      safeCheck('Italics Text', 'CTAs & Formatting', () => checkItalicsPresent(html)),
 
-      // Infographics
-      safeCheck(() => checkInfographicsPresent(html)),
-      safeCheck(() => checkSVGAccessibility(html)),
+      // ── Infographics ───────────────────────────────────────────────────────
+      safeCheck('Infographic Present', 'Infographics', () => checkInfographicsPresent(html)),
+      safeCheck('SVG Accessibility',   'Infographics', () => checkSVGAccessibility(html)),
     ];
 
     // Merge in formatting validator results (dedup by name)
@@ -470,11 +481,13 @@ export function scoreContent(
         }
       }
     } catch (err) {
-      console.warn('[scorer] validateFormatting threw:', err);
+      console.warn('[SCORER] validateFormatting threw:', err);
     }
 
     const passCount = checks.filter((c) => c.status === 'pass').length;
-    const overall = checks.length > 0 ? Math.round((passCount / checks.length) * 100) : 0;
+    const overall   = checks.length > 0 ? Math.round((passCount / checks.length) * 100) : 0;
+
+    console.log('[SCORER] Done:', overall, '/', checks.length, 'checks,', passCount, 'passed');
 
     const suggestions = checks
       .filter((c) => c.status !== 'pass')
@@ -482,7 +495,8 @@ export function scoreContent(
 
     return { overall, checks, suggestions };
   } catch (err) {
-    console.error('[scorer] Unexpected error in scoreContent:', err);
-    return DEFAULT_SCORE;
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[SCORER] Unexpected error:', msg);
+    return { overall: 0, checks: [], suggestions: ['Scoring failed: ' + msg] };
   }
 }

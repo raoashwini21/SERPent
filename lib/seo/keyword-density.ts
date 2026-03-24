@@ -30,8 +30,11 @@ function tokenize(text: string): string[] {
 }
 
 export function extractBigrams(text: string): { phrase: string; count: number }[] {
+  if (!text || typeof text !== 'string' || text.length === 0) return [];
   const plain = stripHtml(text);
+  if (!plain) return [];
   const words = tokenize(plain);
+  if (words.length < 2) return [];
   const counts: Record<string, number> = {};
 
   for (let i = 0; i < words.length - 1; i++) {
@@ -45,8 +48,11 @@ export function extractBigrams(text: string): { phrase: string; count: number }[
 }
 
 export function extractTrigrams(text: string): { phrase: string; count: number }[] {
+  if (!text || typeof text !== 'string' || text.length === 0) return [];
   const plain = stripHtml(text);
+  if (!plain) return [];
   const words = tokenize(plain);
+  if (words.length < 3) return [];
   const counts: Record<string, number> = {};
 
   for (let i = 0; i < words.length - 2; i++) {
@@ -63,11 +69,16 @@ export function checkBigramAlignment(
   bigrams: { phrase: string; count: number }[],
   keywords: KeywordData
 ): SEOCheck {
-  const topBigrams = bigrams.slice(0, 3).map((b) => b.phrase);
+  const safeBigrams = bigrams || [];
+  const topBigrams = safeBigrams.slice(0, 3).map((b) => (b && b.phrase) || '').filter(Boolean);
+  const primaryKw = (keywords?.primaryKeyword || '').toLowerCase();
   const targetPhrases = [
-    keywords.primaryKeyword.toLowerCase(),
-    ...(keywords.secondaryKeywords || []).map((k) => k.keyword.toLowerCase()),
-  ];
+    primaryKw,
+    ...(keywords?.secondaryKeywords || []).map((k) => ((k && k.keyword) || '').toLowerCase()),
+  ].filter(Boolean);
+  if (topBigrams.length === 0 || targetPhrases.length === 0) {
+    return { category: 'Keyword Density', name: 'Top Bigram Alignment', status: 'warn', detail: 'Not enough data for bigram analysis' };
+  }
 
   const hits = topBigrams.filter((bigram) =>
     targetPhrases.some((kw) => kw.includes(bigram) || bigram.includes(kw.split(' ').slice(0, 2).join(' ')))
@@ -89,12 +100,17 @@ export function checkTrigramAlignment(
   trigrams: { phrase: string; count: number }[],
   keywords: KeywordData
 ): SEOCheck {
-  const topTrigrams = trigrams.slice(0, 3).map((t) => t.phrase);
+  const safeTrigrams = trigrams || [];
+  const topTrigrams = safeTrigrams.slice(0, 3).map((t) => (t && t.phrase) || '').filter(Boolean);
+  const primaryKw = (keywords?.primaryKeyword || '').toLowerCase();
   const targetPhrases = [
-    keywords.primaryKeyword.toLowerCase(),
-    ...(keywords.secondaryKeywords || []).map((k) => k.keyword.toLowerCase()),
-    ...(keywords.longTailKeywords || []).map((k) => k.toLowerCase()),
-  ];
+    primaryKw,
+    ...(keywords?.secondaryKeywords || []).map((k) => ((k && k.keyword) || '').toLowerCase()),
+    ...(keywords?.longTailKeywords  || []).map((k) => (k || '').toLowerCase()),
+  ].filter(Boolean);
+  if (topTrigrams.length === 0 || targetPhrases.length === 0) {
+    return { category: 'Keyword Density', name: 'Top Trigram Alignment', status: 'warn', detail: 'Not enough data for trigram analysis' };
+  }
 
   const hits = topTrigrams.filter((trigram) =>
     targetPhrases.some((kw) => kw.includes(trigram) || trigram.split(' ').every((w) => kw.includes(w)))

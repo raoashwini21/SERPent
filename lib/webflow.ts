@@ -132,6 +132,43 @@ export async function listAllBlogs(): Promise<{ title: string; slug: string; id:
   return results;
 }
 
+export async function createBlogPost(data: {
+  postBody: string;
+  title: string;
+  slug: string;
+  metaTitle: string;
+  metaDescription: string;
+  excerpt: string;
+}): Promise<{ id: string; slug: string } | null> {
+  try {
+    const token = process.env.WEBFLOW_API_TOKEN;
+    const collectionId = process.env.WEBFLOW_COLLECTION_ID || '689b0a93a12fc701f9e4daa0';
+    const res = await fetch(`https://api.webflow.com/v2/collections/${collectionId}/items`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        accept: 'application/json',
+      },
+      body: JSON.stringify({
+        fieldData: {
+          'post-body': data.postBody,
+          title: data.title,
+          slug: data.slug,
+          'meta-title': data.metaTitle,
+          'meta-description': data.metaDescription,
+          excerpt: data.excerpt,
+        },
+      }),
+    });
+    if (!res.ok) return null;
+    const json = await res.json() as { id: string; fieldData?: { slug?: string } };
+    return { id: json.id, slug: json.fieldData?.slug || data.slug };
+  } catch {
+    return null;
+  }
+}
+
 export async function updateBlogContent(
   itemId: string,
   updates: Partial<WebflowBlogUpdate>

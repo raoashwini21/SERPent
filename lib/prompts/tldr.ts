@@ -12,6 +12,8 @@ Primary keyword: ${keywords.primaryKeyword}
 Key points to cover: ${research.pros.slice(0, 3).join(', ')}; cons: ${research.cons.slice(0, 2).join(', ')}
 
 RULES:
+- Start with a 'Quick Verdict' paragraph: exactly 2 sentences directly answering 'Is ${research.productName} worth it?' — no heading, just a <p> with <strong>Quick Verdict:</strong> prefix
+- Then follow with exactly 4 bullet points summarizing the blog
 - Exactly 4 bullet points
 - Each bullet under 20 words
 - Include primary keyword "${keywords.primaryKeyword}" in at least one bullet

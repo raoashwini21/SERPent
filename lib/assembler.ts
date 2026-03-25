@@ -2,6 +2,7 @@ import { ContentBrief, KeywordData, ResearchBrief } from './types';
 import { generateFAQSchema, generateArticleSchema } from './seo/schema-generator';
 import { injectInternalLinks } from './links/internal-linker';
 import { injectExternalLinks } from './links/external-linker';
+import { generateSlug } from './seo/url-generator';
 
 function stripHtml(html: string): string {
   return html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -15,7 +16,6 @@ function extractFAQPairs(faqHtml: string): { question: string; answer: string }[
 
   while ((match = h3Pattern.exec(faqHtml)) !== null) {
     const question = stripHtml(match[1]).trim();
-    // Grab the first <p> after the h3 as the answer
     const answerBlock = match[2];
     const pMatch = answerBlock.match(/<p[^>]*>([\s\S]*?)<\/p>/i);
     const answer = pMatch ? stripHtml(pMatch[1]).trim() : stripHtml(answerBlock).slice(0, 300).trim();
@@ -42,41 +42,17 @@ ${items}
 </nav>`;
 }
 
-/** Build meta tag strings for <head> */
-function buildMetaHeadTags(meta: Record<string, unknown>): string {
-  const lines: string[] = [];
-
-  if (typeof meta.title === 'string') {
-    lines.push(`  <title>${meta.title}</title>`);
-  }
-  if (typeof meta.description === 'string') {
-    lines.push(`  <meta name="description" content="${meta.description}" />`);
-  }
-  if (typeof meta.keywords === 'string') {
-    lines.push(`  <meta name="keywords" content="${meta.keywords}" />`);
-  }
-  if (typeof meta.canonical === 'string') {
-    lines.push(`  <link rel="canonical" href="${meta.canonical}" />`);
-  }
-
-  const og = meta.og as Record<string, string> | undefined;
-  if (og) {
-    if (og.url) lines.push(`  <meta property="og:url" content="${og.url}" />`);
-    if (og.type) lines.push(`  <meta property="og:type" content="${og.type}" />`);
-    if (og.title) lines.push(`  <meta property="og:title" content="${og.title}" />`);
-    if (og.description) lines.push(`  <meta property="og:description" content="${og.description}" />`);
-    if (og.image) lines.push(`  <meta property="og:image" content="${og.image}" />`);
-  }
-
-  const tw = meta.twitter as Record<string, string> | undefined;
-  if (tw) {
-    if (tw.card) lines.push(`  <meta name="twitter:card" content="${tw.card}" />`);
-    if (tw.title) lines.push(`  <meta name="twitter:title" content="${tw.title}" />`);
-    if (tw.description) lines.push(`  <meta name="twitter:description" content="${tw.description}" />`);
-    if (tw.image) lines.push(`  <meta name="twitter:image" content="${tw.image}" />`);
-  }
-
-  return lines.join('\n');
+export interface AssembledBlog {
+  blogHtml: string;
+  metadata: {
+    title: string;
+    slug: string;
+    metaTitle: string;
+    metaDescription: string;
+    excerpt: string;
+    faqSchema: string;
+    articleSchema: string;
+  };
 }
 
 export function assembleHTML(
@@ -87,14 +63,13 @@ export function assembleHTML(
   meta: Record<string, unknown>,
   research?: ResearchBrief,
   category?: string
-): string {
+): AssembledBlog {
   // Build FAQ schema from FAQ section content
   const faqHtml = sections.get('faq') ?? '';
   const faqPairs = extractFAQPairs(faqHtml);
-  const faqSchemaJson = faqPairs.length > 0 ? generateFAQSchema(faqPairs) : null;
-  const articleSchemaJson = generateArticleSchema(brief);
+  const faqSchema = faqPairs.length > 0 ? generateFAQSchema(faqPairs) : '';
+  const articleSchema = generateArticleSchema(brief);
 
-  const metaHeadTags = buildMetaHeadTags(meta);
   const toc = buildTableOfContents(brief);
 
   // Assemble section bodies
@@ -103,7 +78,6 @@ export function assembleHTML(
       const sectionHtml = sections.get(section.id) ?? '';
       const infographic = infographics.get(section.id) ?? null;
 
-      // Inject infographic after the first <p> tag in the section, if one exists
       let body = sectionHtml;
       if (infographic) {
         const firstPEnd = body.indexOf('</p>');
@@ -130,27 +104,32 @@ export function assembleHTML(
     try { bodyHtml = injectExternalLinks(bodyHtml, research); } catch { /* non-fatal */ }
   }
 
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-${metaHeadTags}
-${faqSchemaJson ? `  <script type="application/ld+json">\n${faqSchemaJson}\n  </script>` : ''}
-  <script type="application/ld+json">
-${articleSchemaJson}
-  </script>
-</head>
-<body>
-<article class="blog-post">
+  // ── blogHtml: Webflow-compatible clean HTML (no html/head/body/script wrappers) ──
+  const blogHtml = `<h1>${brief.h1}</h1>\n\n${toc}\n\n${bodyHtml}`;
 
-<h1>${brief.h1}</h1>
+  // ── metadata ──────────────────────────────────────────────────────────────
+  const slug = typeof meta.slug === 'string' && meta.slug
+    ? meta.slug
+    : generateSlug(keywords.primaryKeyword);
 
-${toc}
+  // Extract excerpt from intro section (first 150 chars of plain text)
+  const introHtml = sections.get('intro') ?? sections.get(brief.sections[0]?.id ?? '') ?? '';
+  const excerptFull = stripHtml(introHtml);
+  const excerpt = excerptFull.length > 150 ? excerptFull.slice(0, 150) + '...' : excerptFull;
 
-${bodyHtml}
+  const metaTitle = typeof meta.title === 'string' ? meta.title : brief.h1;
+  const metaDescription = typeof meta.description === 'string' ? meta.description : excerpt;
 
-</article>
-</body>
-</html>`;
+  return {
+    blogHtml,
+    metadata: {
+      title: brief.h1,
+      slug,
+      metaTitle,
+      metaDescription,
+      excerpt,
+      faqSchema,
+      articleSchema,
+    },
+  };
 }

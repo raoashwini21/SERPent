@@ -24,7 +24,7 @@ RULES:
 - Be clear about who should use it and who should look elsewhere
 - Include primary keyword "${keywords.primaryKeyword}" at least once naturally
 - End with a final SalesRobot free trial CTA — natural, not pushy. Example:
-  <p>If you're in the market for a LinkedIn + email outreach tool, <a href="https://www.salesrobot.co/signup">SalesRobot offers a 14-day free trial</a> — no commitment, takes 2 minutes.</p>
+  <p>If you're in the market for a LinkedIn + email outreach tool, <a href="https://www.salesrobot.co/signup">SalesRobot offers a 14-day free trial</a> — no credit card needed.</p>
 - Each paragraph under 30 words
 - Use "I" not "we"
 - Tone: like wrapping up a conversation with a friend — direct, honest, zero fluff

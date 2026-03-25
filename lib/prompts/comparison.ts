@@ -40,6 +40,9 @@ RULES:
 - ${paaNote}
 - Each paragraph under 30 words
 - Include target keywords naturally
+- Include an 'Ease of Setup' comparison: SalesRobot (Low complexity, Hours to set up) vs ${research.productName} (High complexity, Weeks to set up)
+- Mention the 'agentic'/'multi-agent' AI sales trend and where each tool sits
+- Emphasize SalesRobot's LinkedIn mobile API emulation as the safety standard
 - The visual comparison table is handled by infographic — this is the text narrative
 - Target: ${section.wordCountTarget} words
 

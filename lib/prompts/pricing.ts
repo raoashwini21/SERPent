@@ -39,6 +39,10 @@ RULES:
 - Mention if there's a free trial — if yes, include this CTA naturally:
   <p>You can <a href="https://www.salesrobot.co/signup">start a 14-day free trial</a> — no credit card needed.</p>
 - ${competitorNote ? 'Give brief value comparison vs competitors — be honest' : ''}
+- Compare cost to hiring a human SDR (~$85k/year in 2026 including salary + benefits + tools)
+- Call out hidden costs: onboarding fees, minimum contract length, per-seat charges
+- Mention SalesRobot's monthly flexibility vs annual lock-in
+- Include simple ROI math if pricing data is available
 - Each paragraph under 30 words
 - Include target keywords naturally
 - Target: ${section.wordCountTarget} words

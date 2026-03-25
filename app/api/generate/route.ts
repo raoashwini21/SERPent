@@ -9,12 +9,11 @@ import { generateInfographic } from '../../../lib/infographics/generator';
 import { validateSVG } from '../../../lib/infographics/validator';
 import { wrapInFigure } from '../../../lib/infographics/embedder';
 import { assembleHTML } from '../../../lib/assembler';
-import { scoreContent } from '../../../lib/seo/content-scorer';
 import { generateMetaTags } from '../../../lib/seo/meta-generator';
 import { generateSlug } from '../../../lib/seo/url-generator';
 import { searchWeb } from '../../../lib/jina';
 import { FunnelStage } from '../../../lib/config/funnel-stages';
-import { KeywordData, SERPAnalysis, ContentBrief, ResearchBrief, SEOScore } from '../../../lib/types';
+import { KeywordData, SERPAnalysis, ContentBrief, ResearchBrief } from '../../../lib/types';
 
 // Minimal fallback keyword data when discovery completely fails
 function fallbackKeywordData(topic: string): KeywordData {
@@ -39,12 +38,6 @@ function fallbackSERPAnalysis(topic: string): SERPAnalysis {
   };
 }
 
-// Default SEO score when scoring fails
-const DEFAULT_SEO_SCORE: SEOScore = {
-  overall: 0,
-  checks: [],
-  suggestions: ['SEO scoring failed — please retry'],
-};
 
 export async function POST(req: NextRequest) {
   const body = await req.json() as {
@@ -90,10 +83,9 @@ export async function POST(req: NextRequest) {
       let contentBrief: ContentBrief | null = null;
       let research: ResearchBrief | null = null;
       // Post-processing accumulator — updated as each step succeeds
-      let safetySlug = '';
       let safetyMeta: Record<string, unknown> = {};
       let safetyHtml = '';
-      let safetySeoScore: SEOScore = DEFAULT_SEO_SCORE;
+      let safetySlug = '';
 
       // ── Safety timeout at 270s (Vercel hard limit is 300s) ───────────────
       const safetyTimeout = setTimeout(() => {
@@ -102,10 +94,17 @@ export async function POST(req: NextRequest) {
           phase: 'post',
           message: 'Generation timed out — sending partial results',
         });
-        send('score', safetySeoScore);
         send('complete', {
-          html: safetyHtml || `<article class="blog-post"><h1>${body.topic}</h1><p>Content generation timed out. Please retry.</p></article>`,
-          score: safetySeoScore,
+          html: safetyHtml || `<h1>${body.topic}</h1><p>Content generation timed out. Please retry.</p>`,
+          summary: {
+            title: body.topic,
+            wordCount: 0,
+            sectionCount: 0,
+            primaryKeyword: keywordData.primaryKeyword,
+            infographicCount: 0,
+            internalLinkCount: 0,
+            externalLinkCount: 0,
+          },
           meta: safetyMeta,
           slug: safetySlug || body.topic.toLowerCase().replace(/\s+/g, '-').slice(0, 60),
           brief: contentBrief,
@@ -266,8 +265,9 @@ export async function POST(req: NextRequest) {
 
         // Step 4c: Assemble HTML
         send('status', { phase: 'post', message: 'Assembling HTML...' });
+        let assembled: { blogHtml: string; metadata: { title: string; slug: string; metaTitle: string; metaDescription: string; excerpt: string; faqSchema: string; articleSchema: string } } | null = null;
         try {
-          safetyHtml = assembleHTML(
+          assembled = assembleHTML(
             contentBrief,
             sections,
             infographics,
@@ -276,45 +276,38 @@ export async function POST(req: NextRequest) {
             research ?? undefined,
             body.category
           );
+          safetyHtml = assembled.blogHtml;
+          safetySlug = assembled.metadata.slug;
         } catch (err) {
           console.warn('[generate] assembleHTML failed:', err);
-          // Fallback: concatenate all section HTML with H1 header
           const allSectionBlocks = Array.from(sections.entries())
             .map(([id, html]) => `<section id="${id}">${html}</section>`)
             .join('\n\n');
-          safetyHtml = `<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="UTF-8" /><title>${contentBrief.h1}</title></head>
-<body>
-<article class="blog-post">
-<h1>${contentBrief.h1}</h1>
-${allSectionBlocks}
-</article>
-</body>
-</html>`;
+          safetyHtml = `<h1>${contentBrief.h1}</h1>\n${allSectionBlocks}`;
         }
 
-        // Step 4d: SEO scoring
-        send('status', { phase: 'post', message: 'Running SEO scorer...' });
-        try {
-          const metaForScorer = safetyMeta as Record<string, string>;
-          safetySeoScore = scoreContent(safetyHtml, keywordData, {
-            title: metaForScorer.title ?? contentBrief.h1,
-            description: metaForScorer.description ?? '',
-            slug: safetySlug,
-          });
-        } catch (err) {
-          console.warn('[generate] SEO scoring failed:', err);
-          safetySeoScore = DEFAULT_SEO_SCORE;
-        }
+        // Step 4d: Count stats (no scoring)
+        send('status', { phase: 'post', message: 'Counting stats...' });
+        const wordCount = safetyHtml.replace(/<[^>]*>/g, ' ').split(/\s+/).filter(Boolean).length;
+        const sectionCount = (safetyHtml.match(/<h2/gi) || []).length;
+        const infographicCount = (safetyHtml.match(/blog-infographic/gi) || []).length;
+        const internalLinkCount = (safetyHtml.match(/salesrobot\.co/gi) || []).length;
+        const externalLinkCount = (safetyHtml.match(/target="_blank"/gi) || []).length;
 
-        // Step 4e: Emit score + complete
-        send('score', safetySeoScore);
+        // Step 4e: Emit complete
         send('complete', {
           html: safetyHtml,
-          score: safetySeoScore,
-          meta: safetyMeta,
-          slug: safetySlug,
+          summary: {
+            title: assembled?.metadata.title ?? contentBrief.h1,
+            wordCount,
+            sectionCount,
+            primaryKeyword: keywordData.primaryKeyword,
+            infographicCount,
+            internalLinkCount,
+            externalLinkCount,
+          },
+          meta: assembled?.metadata ?? safetyMeta,
+          slug: assembled?.metadata.slug ?? safetySlug,
           brief: contentBrief,
           keywords: keywordData,
         });

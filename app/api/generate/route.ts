@@ -118,6 +118,7 @@ export async function POST(req: NextRequest) {
         send('status', { phase: 'seo', step: 'keywords', message: 'Discovering keywords...' });
 
         try {
+          console.log('[KEYWORDS] Discovering for topic:', body.topic);
           const allKeywords = await discoverKeywords(body.topic, body.category);
           send('status', {
             phase: 'seo',
@@ -183,6 +184,7 @@ export async function POST(req: NextRequest) {
         // ── PHASE 3: CONTENT GENERATION ───────────────────────────────────
         const sections = new Map<string, string>();
         const infographics = new Map<string, string | null>();
+        const usedInfographicTypes = new Set<string>();
 
         for (const section of contentBrief.sections) {
           send('status', {
@@ -194,11 +196,19 @@ export async function POST(req: NextRequest) {
           let sectionHtml = '';
           let figureHtml: string | null = null;
 
+          // Deduplicate infographic types — only one per type across the whole blog
+          let infographicType = section.infographicType;
+          if (infographicType !== 'none' && usedInfographicTypes.has(infographicType)) {
+            infographicType = 'none';
+          } else if (infographicType !== 'none') {
+            usedInfographicTypes.add(infographicType);
+          }
+
           try {
             const [generatedHtml, infographicSvg] = await Promise.all([
               generateSection(section, contentBrief, research!, keywordData),
-              section.infographicType !== 'none'
-                ? generateInfographic(section.infographicType, section, research!, keywordData).catch(() => null)
+              infographicType !== 'none'
+                ? generateInfographic(infographicType, section, research!, keywordData).catch(() => null)
                 : Promise.resolve(null),
             ]);
 
@@ -288,15 +298,17 @@ export async function POST(req: NextRequest) {
 
         // Step 4d: Count stats (no scoring)
         send('status', { phase: 'post', message: 'Counting stats...' });
-        const wordCount = safetyHtml.replace(/<[^>]*>/g, ' ').split(/\s+/).filter(Boolean).length;
-        const sectionCount = (safetyHtml.match(/<h2/gi) || []).length;
-        const infographicCount = (safetyHtml.match(/blog-infographic/gi) || []).length;
-        const internalLinkCount = (safetyHtml.match(/salesrobot\.co/gi) || []).length;
-        const externalLinkCount = (safetyHtml.match(/target="_blank"/gi) || []).length;
+        const html = assembled?.blogHtml ?? safetyHtml;
+        console.log('[STATS] html length:', html.length, 'words:', html.replace(/<[^>]*>/g, ' ').split(/\s+/).filter(Boolean).length, 'sections:', (html.match(/<h2/gi) || []).length);
+        const wordCount = html.replace(/<[^>]*>/g, ' ').split(/\s+/).filter(Boolean).length;
+        const sectionCount = (html.match(/<h2/gi) || []).length;
+        const infographicCount = (html.match(/blog-infographic/gi) || []).length;
+        const internalLinkCount = (html.match(/salesrobot\.co/gi) || []).length;
+        const externalLinkCount = (html.match(/target="_blank"/gi) || []).length;
 
         // Step 4e: Emit complete
         send('complete', {
-          html: safetyHtml,
+          html: assembled?.blogHtml ?? safetyHtml,
           summary: {
             title: assembled?.metadata.title ?? contentBrief.h1,
             wordCount,

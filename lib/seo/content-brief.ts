@@ -80,14 +80,56 @@ INFOGRAPHIC TYPES to use contextually:
 - "pros_cons": for advantages/disadvantages sections
 - "features": for feature lists or product capabilities
 - "pricing": for pricing plan comparisons
-- "workflow": for step-by-step processes
 - "stats": for data/statistics heavy sections
 - "none": for regular text sections
+- NEVER assign "workflow" to any section — use "none" instead; write process steps as <ol><li> HTML lists
+
+DEDUPLICATION RULE: Each infographic type may appear AT MOST ONCE across the entire blog.
+If the same type would apply to two sections, assign "none" to the second occurrence.
+Priority order (keep first occurrence): comparison > pros_cons > pricing > features > stats
 
 Return ONLY the JSON object, nothing else.`;
 
   const raw = await callClaude(systemPrompt, userMessage, 4096);
   const cleaned = raw.replace(/```(?:json)?/g, '').trim();
   const parsed = JSON.parse(cleaned) as ContentBrief;
+
+  // ── Post-processing: deduplicate infographic types ────────────────────────
+  // Priority order: comparison > pros_cons > pricing > features > stats > workflow
+  const PRIORITY = ['comparison', 'pros_cons', 'pricing', 'features', 'stats', 'workflow'];
+  const seenTypes = new Set<string>();
+
+  // Remove workflow entirely (disabled)
+  for (const section of parsed.sections) {
+    if (section.infographicType === 'workflow') {
+      section.infographicType = 'none';
+    }
+  }
+
+  // Deduplicate — keep first occurrence by priority, then by position
+  for (const type of PRIORITY) {
+    let found = false;
+    for (const section of parsed.sections) {
+      if (section.infographicType === type) {
+        if (found || seenTypes.has(type)) {
+          section.infographicType = 'none';
+        } else {
+          found = true;
+          seenTypes.add(type);
+        }
+      }
+    }
+  }
+
+  // Fix 5: salesrobot section — only gets 'pricing' if pricing not already used elsewhere
+  const pricingAlreadyUsed = parsed.sections
+    .filter((s) => s.id !== 'salesrobot')
+    .some((s) => s.infographicType === 'pricing');
+
+  if (pricingAlreadyUsed) {
+    const salesrobotSection = parsed.sections.find((s) => s.id === 'salesrobot');
+    if (salesrobotSection) salesrobotSection.infographicType = 'none';
+  }
+
   return parsed;
 }

@@ -32,6 +32,8 @@ export async function generateInfographic(
   keywords: KeywordData
 ): Promise<string | null> {
   if (type === 'none') return null;
+  // DISABLED — workflow infographics replaced with text-based numbered lists
+  if (type === 'workflow') return null;
 
   const template = INFOGRAPHIC_TEMPLATES[type];
   if (!template) return null;

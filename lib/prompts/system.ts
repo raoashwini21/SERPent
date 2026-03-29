@@ -31,4 +31,10 @@ COMPETITIVE COMPARISON:
 SGE OPTIMIZATION:
 - TL;DR must answer 'Is {product} worth it?' in exactly 2 sentences at the top
 - Bold key stats: funding, user counts, pricing figures
-- Final CTA must say: 14-day free trial, no credit card needed`;
+- Final CTA must say: 14-day free trial, no credit card needed
+
+IMPLEMENTATION/PROCESS SECTIONS: When writing about setup steps or implementation process, use a numbered HTML list (<ol><li>) instead of describing it in prose. Format each step as:
+<ol>
+  <li><strong>Step name</strong> — one sentence description</li>
+</ol>
+This replaces visual workflow diagrams.`;

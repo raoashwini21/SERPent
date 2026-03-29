@@ -5,6 +5,18 @@ import { fetchBlogById, fetchBlogByUrl } from '../../../../lib/webflow';
 import { findQuickWins, findMissingKeywords } from '../../../../lib/gsc-parser';
 import type { GSCKeyword, BlogUpdateAnalysis } from '../../../../lib/types';
 
+function extractTopicFromTitle(title: string): string {
+  return title
+    .replace(/\b(review|guide|complete|tutorial|how to|best|top|vs|comparison|2024|2025|2026)\b/gi, '')
+    .replace(/[^a-zA-Z0-9\s]/g, '')
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 4)
+    .join(' ');
+}
+
 export interface AnalyzeResult {
   originalHtml: string;
   originalText: string;
@@ -154,11 +166,12 @@ export async function POST(req: NextRequest) {
     // ── 2. Keyword / topic from hint or URL ──────────────────────────────────
     const keyword =
       primary_keyword ||
+      (metaTitle ? extractTopicFromTitle(metaTitle) : '') ||
       (sourceUrl
         ? sourceUrl.replace(/^https?:\/\/[^/]+\/blog\//, '').replace(/-/g, ' ').split('/')[0]
         : '') ||
-      (metaTitle ? metaTitle.split(' ').slice(0, 5).join(' ') : '') ||
       'blog';
+    console.log('[update/analyze] Using topic keyword:', keyword);
 
     // ── 3. Surgical Claude analysis ──────────────────────────────────────────
     console.log('[update/analyze] Running surgical Claude analysis');

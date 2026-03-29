@@ -71,7 +71,7 @@ SECTIONS TO INCLUDE (in order of importance — inverted pyramid):
    - Frame headings as questions where possible
    - Map PAA questions to relevant sections
    - Assign appropriate infographicType where it adds value
-4. salesrobot — Why SalesRobot is the solution (200 words, infographicType: "features")
+4. salesrobot — Why SalesRobot is the solution (200 words, infographicType: "pricing")
 5. faq — ALL People Also Ask questions as H3s (50-80 words per answer)
 6. conclusion — Summary + CTA (150 words)
 

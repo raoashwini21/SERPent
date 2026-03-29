@@ -12,18 +12,37 @@ export const INFOGRAPHIC_TEMPLATES: Record<string, InfographicTemplate> = {
 DATA:
 {data}
 
-DESIGN REQUIREMENTS:
-- White (#FFFFFF) background rect with rounded corners (rx="16") and border stroke="#E5E7EB" stroke-width="1"
-- viewBox="0 0 800 {auto-height}" — calculate height based on number of rows
-- Two columns: left = {productName} (gray header #6B7280), right = SalesRobot (purple header #6C5CE7)
-- Feature rows with alternating row backgrounds (#F9FAFB and #F3F4F6), each row has stroke="#E5E7EB" stroke-width="1"
-- Each row group must have a clipPath so text never bleeds outside the row rectangle
-- For each feature cell: green check circle (#22C55E) for wins, red X circle (#EF4444) for losses, amber dash (#F59E0B) for partial/neutral
-- Row text (#1F2937 dark gray), font-size 13px, text-anchor="start", truncated to max 60 chars with ...
-- Feature names in first column: #374151, font-size 13px, bold
-- Column headers: bold, {productName} header in #6B7280, SalesRobot header in #6C5CE7
-- Bottom CTA row: full-width purple (#6C5CE7) background, white "Try SalesRobot Free →" text centered, font-size 14
-- Use clipPath on every row group to prevent text overflow
+CRITICAL SVG RULES FOR ICONS:
+- NEVER use emoji characters (✓ ✗ — or any unicode symbols) anywhere in the SVG
+- NEVER put icon characters inside <text> elements
+- ALL icons must be drawn as SVG shapes only: <circle>, <polyline>, <line> elements
+- Feature names go in <text> elements with NO icon characters whatsoever
+- Icons go in SEPARATE <g> elements positioned in the icon column
+
+GREEN CHECK: <circle r='12' fill='#22C55E'/> +
+<polyline points='-5,0 -1,4 5,-4' stroke='white' stroke-width='2' fill='none'/>
+
+RED X: <circle r='12' fill='#EF4444'/> +
+<line x1='-5' y1='-5' x2='5' y2='5' stroke='white' stroke-width='2'/> +
+<line x1='5' y1='-5' x2='-5' y2='5' stroke='white' stroke-width='2'/>
+
+AMBER DASH: <circle r='12' fill='#F59E0B'/> +
+<line x1='-5' y1='0' x2='5' y2='0' stroke='white' stroke-width='2.5'/>
+
+LAYOUT:
+- viewBox='0 0 800 {height}' where height = 80 + (numFeatures * 50) + 60
+- White background (#FFFFFF)
+- Three columns: feature text x=20, 11x icon cx=520, SalesRobot icon cx=680
+- Header: 'Feature' | '11x' gray #6B7280 | 'SalesRobot' purple #6C5CE7
+- Row height 50px, alternating bg white/#F9FAFB
+- Purple CTA row at bottom: 'Try SalesRobot Free →'
+- Border lines: stroke='#E5E7EB' stroke-width='1'
+
+Icon assignments for 11x vs SalesRobot:
+- Alice/Julian/Database/Multi-Channel/Phone Agent/Research:
+  11x = GREEN check, SalesRobot = AMBER dash
+- LinkedIn Safety/Ease of Setup/Transparent Pricing/Monthly Flexibility:
+  11x = RED X, SalesRobot = GREEN check
 
 {svgRules}`,
     extractData: (_section, research, keywords) => {
@@ -44,20 +63,22 @@ DESIGN REQUIREMENTS:
 DATA:
 {data}
 
-DESIGN REQUIREMENTS:
-- viewBox="0 0 800 400"
-- White (#FFFFFF) background rect, rx="16", stroke="#E5E7EB" stroke-width="1"
-- Two equal columns (each 380px wide) split by a 1px vertical line at x=400, stroke="#E5E7EB"
-- LEFT COLUMN — Pros:
-  - Green header bar (#22C55E) from x=20 y=20 to x=390 h=44, rx="8", with white text "✓ Pros" font-size="16" bold centered
-  - Each pro: white row with left green circle (cx=42 cy=Y r=8 fill="#22C55E"), then text at x=58 fill="#1F2937" font-size="13"
-  - Row height 36px, starting y=80
-- RIGHT COLUMN — Cons:
-  - Red header bar (#EF4444) from x=410 y=20 to x=780 h=44, rx="8", with white text "✗ Cons" font-size="16" bold centered
-  - Each con: white row with left red circle (cx=430 cy=Y r=8 fill="#EF4444"), then text at x=446 fill="#1F2937" font-size="13"
-  - Row height 36px, starting y=80
-- Truncate all text to max 35 characters — add "..." if longer
-- Each text element uses clip-path to stay in its column
+PROS/CONS SVG LAYOUT:
+- viewBox='0 0 800 500' white background
+- TWO clear panels side by side (not interleaved)
+- LEFT panel (x=0 to x=390):
+  - Header bar: green (#22C55E) background, white text 'What Works'
+  - Each pro: green circle bullet + pro text, left-aligned
+  - Max 5 pros, truncate text at 55 chars
+- RIGHT panel (x=410 to x=800):
+  - Header bar: red (#EF4444) background, white text 'Watch Out For'
+  - Each con: red circle bullet + con text, left-aligned
+  - Max 5 cons, truncate text at 55 chars
+- Thin vertical divider line at x=400: stroke='#E5E7EB'
+- Row spacing: 60px per item starting y=100
+- Bullet circles: r='8', filled green/red
+- Text: font-size='13' fill='#1F2937'
+- NO emoji, NO unicode symbols — SVG shapes only for bullets
 
 {svgRules}`,
     extractData: (_section, research, keywords) => {
@@ -113,8 +134,18 @@ DESIGN REQUIREMENTS:
 - The LAST card (or the "Pro" / "Growth" card if present): use stroke="#6C5CE7" stroke-width="2" and add a small "Best Value" badge (purple rect + white text) at top-right corner
 - Free trial note at bottom center: fill="#6C5CE7" font-size="12" text-anchor="middle"
 
+If showing SalesRobot pricing:
+- Starter: $99/month — 1 LinkedIn account, unlimited campaigns, AI personalization
+- Professional: $149/month — 3 LinkedIn accounts, priority support
+- Agency: $299/month — 10 accounts, whitelabel, dedicated manager
+- Highlight Starter with purple border + 'Most Popular' badge
+- White background, purple accents
+
 {svgRules}`,
-    extractData: (_section, research, keywords) => {
+    extractData: (section, research, keywords) => {
+      if (section.id === 'salesrobot') {
+        return `Product: SalesRobot\nKeyword: ${keywords.primaryKeyword}\nFree trial: true\nPlans:\nStarter: $99/month — 1 LinkedIn account, unlimited campaigns, AI personalization\nProfessional: $149/month — 3 LinkedIn accounts, priority support\nAgency: $299/month — 10 accounts, whitelabel, dedicated manager`;
+      }
       const pricing = research.pricing || { plans: [], freeTrial: false };
       const plans = (pricing.plans || [])
         .slice(0, 3)

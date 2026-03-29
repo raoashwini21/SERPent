@@ -25,15 +25,36 @@ ${ratingsNote}
 Pros to draw from: ${research.pros.join(' | ')}
 Cons to draw from: ${research.cons.join(' | ')}
 
-RULES:
-- Start with the H2 heading: <h2>${section.heading}</h2>
-- Alternate pros and cons: pro → con → pro → con (NOT all pros then all cons)
-- Use <p> tags with <strong>Pro:</strong> and <strong>Con:</strong> labels inline
-- Each point: 1 short paragraph under 30 words
-- Include target keywords naturally — don't force them
-- ${ratingsNote ? 'Mention ratings as social proof in the intro sentence' : 'Skip ratings — not available'}
-- ${paaNote}
-- Keep tone honest and balanced — don't oversell
+RULES — Write with this EXACT structure:
+
+1. Open with 1-2 sentences of context (what kind of tool is this, who is it for)
+${ratingsNote ? '   Mention ratings as social proof in the intro sentence' : '   Skip ratings — not available'}
+
+2. TWO CLEAR COLUMNS in prose — do NOT alternate line by line:
+
+   Write ALL pros together as a group first:
+   <h3>What ${research.productName} Does Well</h3>
+   — Use <ul><li> for each pro
+   — Each pro: bold the key point, then 1 sentence explanation
+   — 4-5 pros maximum
+   — Include social proof where available (ratings, funding, notable customers)
+
+   Then ALL cons together:
+   <h3>Where ${research.productName} Falls Short</h3>
+   — Use <ul><li> for each con
+   — Each con: bold the key point, then 1 sentence explanation
+   — 4-5 cons maximum
+   — Be honest, not mean
+
+3. Close with a 2-sentence verdict paragraph:
+   'So who is ${research.productName} actually for? [answer]. If you need [alternative use case],
+   [transition to SalesRobot naturally].'
+
+${paaNote}
+
+DO NOT alternate pro/con/pro/con in prose.
+DO NOT write 'Pro:' and 'Con:' as inline labels in paragraphs.
+Group all pros, then all cons. Clean and scannable.
 - Target: ${section.wordCountTarget} words
 
 Return clean HTML only. No markdown.`;

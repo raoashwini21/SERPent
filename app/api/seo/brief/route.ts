@@ -1,39 +1,34 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { generateContentBrief } from '../../../../lib/seo/content-brief';
 import { KeywordData, SERPAnalysis } from '../../../../lib/types';
-import { FunnelStage } from '../../../../lib/config/funnel-stages';
+import { BLOG_TYPES } from '../../../../lib/config/blog-types';
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json() as {
       keyword_data: KeywordData;
       serp_analysis: SERPAnalysis;
-      funnel_stage: string;
+      blog_type: string;
     };
 
-    const { keyword_data, serp_analysis, funnel_stage } = body;
+    const { keyword_data, serp_analysis, blog_type } = body;
 
-    if (!keyword_data || !serp_analysis || !funnel_stage) {
+    if (!keyword_data || !serp_analysis || !blog_type) {
       return NextResponse.json(
-        { error: 'keyword_data, serp_analysis, and funnel_stage are required' },
+        { error: 'keyword_data, serp_analysis, and blog_type are required' },
         { status: 400 }
       );
     }
 
-    const validStages: FunnelStage[] = ['TOFU', 'MOFU', 'BOFU'];
-    if (!validStages.includes(funnel_stage as FunnelStage)) {
+    const validIds = BLOG_TYPES.map((b) => b.id);
+    if (!validIds.includes(blog_type as typeof BLOG_TYPES[number]['id'])) {
       return NextResponse.json(
-        { error: `funnel_stage must be one of: ${validStages.join(', ')}` },
+        { error: `blog_type must be one of: ${validIds.join(', ')}` },
         { status: 400 }
       );
     }
 
-    const brief = await generateContentBrief(
-      keyword_data,
-      serp_analysis,
-      funnel_stage as FunnelStage
-    );
-
+    const brief = await generateContentBrief(keyword_data, serp_analysis, blog_type);
     return NextResponse.json(brief);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';

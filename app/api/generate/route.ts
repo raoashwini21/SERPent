@@ -12,7 +12,7 @@ import { assembleHTML } from '../../../lib/assembler';
 import { generateMetaTags } from '../../../lib/seo/meta-generator';
 import { generateSlug } from '../../../lib/seo/url-generator';
 import { searchWeb } from '../../../lib/jina';
-import { FunnelStage } from '../../../lib/config/funnel-stages';
+import { getBlogType } from '../../../lib/config/blog-types';
 import { KeywordData, SERPAnalysis, ContentBrief, ResearchBrief } from '../../../lib/types';
 
 // Minimal fallback keyword data when discovery completely fails
@@ -43,16 +43,20 @@ export async function POST(req: NextRequest) {
   const body = await req.json() as {
     url?: string;
     topic: string;
-    category: string;
-    funnelStage: FunnelStage;
+    category?: string;
+    blogType: string;
   };
 
-  if (!body.topic || !body.category || !body.funnelStage) {
+  if (!body.topic || !body.blogType) {
     return new Response(
-      JSON.stringify({ error: 'topic, category, and funnelStage are required' }),
+      JSON.stringify({ error: 'topic and blogType are required' }),
       { status: 400, headers: { 'Content-Type': 'application/json' } }
     );
   }
+
+  // Derive category from blogType if not explicitly provided
+  const blogTypeConfig = getBlogType(body.blogType);
+  const effectiveCategory = body.category ?? blogTypeConfig.funnelStage.toLowerCase();
 
   const encoder = new TextEncoder();
 
@@ -119,7 +123,7 @@ export async function POST(req: NextRequest) {
 
         try {
           console.log('[KEYWORDS] Discovering for topic:', body.topic);
-          const allKeywords = await discoverKeywords(body.topic, body.category);
+          const allKeywords = await discoverKeywords(body.topic, effectiveCategory);
           send('status', {
             phase: 'seo',
             step: 'keywords',
@@ -152,7 +156,7 @@ export async function POST(req: NextRequest) {
         send('serp', serpAnalysis);
 
         send('status', { phase: 'seo', step: 'brief', message: 'Building content outline...' });
-        contentBrief = await generateContentBrief(keywordData, serpAnalysis, body.funnelStage);
+        contentBrief = await generateContentBrief(keywordData, serpAnalysis, body.blogType);
         send('brief', contentBrief);
         send('checkpoint', { type: 'outline_review', brief: contentBrief });
 

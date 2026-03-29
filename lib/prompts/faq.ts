@@ -13,10 +13,12 @@ export function buildFAQPrompt(
 
   return `Write the FAQ section for a blog about ${research.productName}.
 
+Blog title: "${brief.blogTitle}"
 Product: ${research.productName} — ${research.oneLiner}
 Primary keyword: ${keywords.primaryKeyword}
+Blog type: ${brief.contentType}
 
-Questions to answer (each becomes an H3):
+Questions to answer (use these EXACTLY as H3 headings):
 ${questionsText}
 
 Context for answers:
@@ -26,14 +28,23 @@ Context for answers:
 - Target audience: ${research.targetAudience}
 - Key competitors: ${research.competitors.slice(0, 3).join(', ')}
 
+Write the FAQ:
+
+<h2>Frequently Asked Questions About ${research.productName}</h2>
+
+For each question above:
+<h3>[Question exactly as listed — do not rephrase]</h3>
+<p>[Direct answer — 2-4 sentences. Specific to THIS product. Not generic advice.]</p>
+<p>[If relevant, add context or a natural SalesRobot mention — but only if the question is directly about alternatives or LinkedIn tools]</p>
+
 RULES:
-- H2 heading: <h2>Frequently Asked Questions About ${research.productName}</h2>
-- Each PAA question becomes an <h3> (verbatim from the list above)
-- Answer each in 2-3 sentences — concise, natural, conversational
-- Include relevant keywords in answers where they fit naturally
-- This section will automatically get JSON-LD FAQ schema — keep answers clean text (no nested HTML in answers)
+- Questions MUST come from the actual People Also Ask data provided above
+- NEVER invent generic questions like 'how often should I post?' or 'what makes content SEO friendly?'
+- Every question must be specifically about ${research.productName} or ${keywords.primaryKeyword}
+- 5-7 questions total
 - Each answer paragraph under 30 words
-- Target: 200-300 words total
+- Answers must be clean text — no nested HTML that breaks FAQ schema
+- Tone: direct, conversational, no marketing fluff
 
 Return clean HTML only using <h2>, <h3>, <p> tags. No markdown.`;
 }

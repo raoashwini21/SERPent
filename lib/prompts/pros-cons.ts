@@ -3,7 +3,7 @@ import { SectionBrief, ResearchBrief, KeywordData } from '../types';
 export function buildProsConsPrompt(
   section: SectionBrief,
   research: ResearchBrief,
-_keywords: KeywordData
+  _keywords: KeywordData
 ): string {
   const ratingsNote =
     research.g2Rating || research.capterraRating
@@ -25,36 +25,41 @@ ${ratingsNote}
 Pros to draw from: ${research.pros.join(' | ')}
 Cons to draw from: ${research.cons.join(' | ')}
 
-RULES — Write with this EXACT structure:
+Write in this EXACT structure:
 
-1. Open with 1-2 sentences of context (what kind of tool is this, who is it for)
-${ratingsNote ? '   Mention ratings as social proof in the intro sentence' : '   Skip ratings — not available'}
+<h2>What Are the Pros and Cons of ${research.productName}?</h2>
 
-2. TWO CLEAR COLUMNS in prose — do NOT alternate line by line:
+<p>[1-2 sentence general impression. ${ratingsNote ? `Mention the ratings (${ratingsNote}) as social proof.` : 'Keep it honest and grounded.'}]</p>
 
-   Write ALL pros together as a group first:
-   <h3>What ${research.productName} Does Well</h3>
-   — Use <ul><li> for each pro
-   — Each pro: bold the key point, then 1 sentence explanation
-   — 4-5 pros maximum
-   — Include social proof where available (ratings, funding, notable customers)
+<p><strong>Benefits of using ${research.productName}:</strong></p>
+<ul>
+<li>You can [benefit 1 from the pros data]</li>
+<li>You can [benefit 2 from the pros data]</li>
+<li>It [benefit 3 from the pros data]</li>
+[Add 1-2 more <li> items from the pros data — 4-5 total max]
+</ul>
 
-   Then ALL cons together:
-   <h3>Where ${research.productName} Falls Short</h3>
-   — Use <ul><li> for each con
-   — Each con: bold the key point, then 1 sentence explanation
-   — 4-5 cons maximum
-   — Be honest, not mean
+<p><strong>${research.productName} shortcomings:</strong></p>
 
-3. Close with a 2-sentence verdict paragraph:
-   'So who is ${research.productName} actually for? [answer]. If you need [alternative use case],
-   [transition to SalesRobot naturally].'
+For each con, write:
+<p><strong>[Con name as a short phrase]</strong></p>
+<p>[2-3 sentences explaining with specifics. Who does this affect? What's the practical impact?]</p>
 
-${paaNote}
+(3-5 cons total)
 
-DO NOT alternate pro/con/pro/con in prose.
-DO NOT write 'Pro:' and 'Con:' as inline labels in paragraphs.
-Group all pros, then all cons. Clean and scannable.
+Close with:
+<p>All in all, ${research.productName} works well for [specific use case from the research].</p>
+<p>That said, finding the perfect tool is hard.</p>
+<p>That's why we've shortlisted the best alternatives to ${research.productName} for you.</p>
+
+RULES:
+- ALL pros grouped together first (not interleaved with cons)
+- ALL cons grouped together after (not interleaved with pros)
+- NO inline 'Pro:' and 'Con:' labels in paragraphs
+- NO alternating pro/con/pro/con pattern
+- Be honest and specific — use actual data from the pros/cons provided
+- ${paaNote}
+- Each <p> under 30 words
 - Target: ${section.wordCountTarget} words
 
 Return clean HTML only. No markdown.`;

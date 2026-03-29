@@ -1,10 +1,8 @@
-import { FunnelStage } from './config/funnel-stages';
-
 export interface BlogConfig {
   url?: string;
   topic: string;
-  category: string;
-  funnelStage: FunnelStage;
+  category?: string;
+  blogType: string;
 }
 
 export interface KeywordData {

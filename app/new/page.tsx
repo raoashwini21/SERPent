@@ -6,7 +6,6 @@ import ProgressStream from '../../components/ProgressStream';
 import OutlinePreview from '../../components/OutlinePreview';
 import LivePreview from '../../components/LivePreview';
 import { useToast } from '../../components/Toast';
-import { FunnelStage } from '../../lib/config/funnel-stages';
 import type {
   KeywordData,
   SERPAnalysis as _SERPAnalysis,
@@ -30,8 +29,7 @@ interface SectionData {
 interface BlogConfig {
   url: string;
   topic: string;
-  category: string;
-  funnelStage: FunnelStage;
+  blogType: string;
 }
 
 interface BlogSummary {

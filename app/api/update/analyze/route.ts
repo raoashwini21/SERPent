@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { scrapeUrl } from '../../../../lib/jina';
 import { callClaude } from '../../../../lib/claude';
-import { scoreContent } from '../../../../lib/seo/content-scorer';
 import { fetchBlogById, fetchBlogByUrl } from '../../../../lib/webflow';
 import { findQuickWins, findMissingKeywords } from '../../../../lib/gsc-parser';
 import type { GSCKeyword, BlogUpdateAnalysis } from '../../../../lib/types';
@@ -26,7 +25,7 @@ export interface UpdateIssue {
   selected: boolean;
 }
 
-const SURGICAL_SYSTEM = `You are an SEO content auditor performing a surgical analysis of a blog post. Your job is to find specific, concrete issues — not general suggestions.
+const SURGICAL_SYSTEM = `You are an SEO content auditor performing a surgical analysis of a specific blog post. Your job is to find specific, concrete issues — not general suggestions.
 
 Return a JSON object with these fields:
 {
@@ -38,8 +37,16 @@ Return a JSON object with these fields:
 }
 
 Rules:
+- You are analyzing THIS specific blog post — do not give generic advice
 - "quote" must be VERBATIM text from the article (so we can find and replace it)
 - Only flag real issues, not hypothetical ones
+- OUTDATED FACTS: Quote the exact sentence that contains outdated info. Only flag things that are factually wrong or dated for 2026
+- YEAR REFERENCES: Find exact quotes containing years 2023, 2024, or 2025 that should be updated to 2026. Quote the exact text
+- MISSING SECTIONS: Compare to what top-ranking pages cover for the topic. List specific section topics this blog is missing
+- KEYWORD GAPS: Keywords that should naturally appear but don't
+- BROKEN CLAIMS: Specific claims that seem inaccurate — quote them
+- If you find no issues in a category, return an empty array for that category
+- Do NOT invent issues. Do NOT give generic blogging advice
 - yearReferences: only years that are clearly outdated (e.g. 2022, 2023 stats presented as current)
 - missingSections: max 3, only genuinely missing important sections
 - keywordGaps: max 5, only semantically relevant missing keywords
@@ -133,31 +140,27 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Blog content is too short to analyze' }, { status: 400 });
     }
 
+    console.log('[ANALYZE] Content length:', originalHtml.length);
+    if (originalHtml.trim().length < 500) {
+      return NextResponse.json(
+        { error: 'Could not fetch blog content. Please try pasting the HTML manually.' },
+        { status: 400 }
+      );
+    }
+
     const originalText = htmlToText(originalHtml);
     const wordCount = originalText.split(/\s+/).filter(Boolean).length;
 
-    // ── 2. Keyword from hint or URL ───────────────────────────────────────────
+    // ── 2. Keyword / topic from hint or URL ──────────────────────────────────
     const keyword =
       primary_keyword ||
       (sourceUrl
         ? sourceUrl.replace(/^https?:\/\/[^/]+\/blog\//, '').replace(/-/g, ' ').split('/')[0]
         : '') ||
+      (metaTitle ? metaTitle.split(' ').slice(0, 5).join(' ') : '') ||
       'blog';
 
-    // ── 3. SEO score ──────────────────────────────────────────────────────────
-    const currentScore = scoreContent(
-      originalHtml,
-      {
-        primaryKeyword: keyword,
-        secondaryKeywords: [],
-        longTailKeywords: [],
-        peopleAlsoAsk: [],
-        keywordGroups: {},
-      },
-      { title: metaTitle || '', description: metaDescription || '', slug: '' }
-    );
-
-    // ── 4. Surgical Claude analysis ───────────────────────────────────────────
+    // ── 3. Surgical Claude analysis ──────────────────────────────────────────
     console.log('[update/analyze] Running surgical Claude analysis');
     type SurgicalResult = {
       outdatedFacts: { quote: string; issue: string; suggestedFix: string }[];
@@ -176,10 +179,10 @@ export async function POST(req: NextRequest) {
     };
 
     try {
-      const contentSnippet = originalText.slice(0, 5000);
+      const contentSnippet = originalHtml.slice(0, 6000);
       const raw = await callClaude(
         SURGICAL_SYSTEM,
-        `Primary keyword: ${keyword}\nCurrent year: ${new Date().getFullYear()}\n\nBlog content:\n${contentSnippet}`,
+        `BLOG TITLE: ${metaTitle || keyword}\nBLOG TOPIC: ${keyword}\nCurrent year: ${new Date().getFullYear()}\n\nBLOG CONTENT (first 6000 chars of HTML):\n${contentSnippet}\n\nFind ONLY issues that exist in THIS specific content. Do not give generic advice.`,
         1500
       );
       const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
@@ -194,13 +197,12 @@ export async function POST(req: NextRequest) {
 
     // ── 6. Build BlogUpdateAnalysis ───────────────────────────────────────────
     const analysis: BlogUpdateAnalysis = {
-      currentScore,
       contentIssues: {
         outdatedFacts: surgicalResult.outdatedFacts || [],
         yearReferences: surgicalResult.yearReferences || [],
         brokenClaims: surgicalResult.brokenClaims || [],
       },
-      seoIssues: currentScore,
+      seoIssues: surgicalResult.keywordGaps || [],
       suggestedFixes: surgicalResult.keywordGaps || [],
       missingSections: surgicalResult.missingSections || [],
       keywordGaps: surgicalResult.keywordGaps || [],
@@ -211,6 +213,7 @@ export async function POST(req: NextRequest) {
 
     // ── 7. Derive issues[] for UI ─────────────────────────────────────────────
     const issues: UpdateIssue[] = [];
+    const existingIds = new Set<string>();
 
     if (surgicalResult.outdatedFacts.length > 0) {
       issues.push({
@@ -220,6 +223,7 @@ export async function POST(req: NextRequest) {
         severity: 'high',
         selected: true,
       });
+      existingIds.add('fix_outdated_facts');
     }
 
     if (surgicalResult.yearReferences.length > 0) {
@@ -230,24 +234,7 @@ export async function POST(req: NextRequest) {
         severity: 'medium',
         selected: true,
       });
-    }
-
-    const failedChecks = currentScore.checks.filter((c) => c.status !== 'pass');
-    const SCORE_ISSUE_MAP: Record<string, { id: string; label: string; severity: UpdateIssue['severity'] }> = {
-      'Internal Links':     { id: 'add_internal_links',  label: 'Add internal links',    severity: 'high'   },
-      'External Links':     { id: 'add_external_links',  label: 'Add external links',    severity: 'medium' },
-      'FAQ Section Present':{ id: 'add_faq',             label: 'Add FAQ section',       severity: 'high'   },
-      'Paragraph Length':   { id: 'fix_paragraph_length',label: 'Fix long paragraphs',   severity: 'medium' },
-      'Keyword Density':    { id: 'fix_keyword_density', label: 'Fix keyword density',   severity: 'high'   },
-    };
-
-    const existingIds = new Set(issues.map((i) => i.id));
-    for (const check of failedChecks) {
-      const mapped = SCORE_ISSUE_MAP[check.name];
-      if (mapped && !existingIds.has(mapped.id) && issues.length < 7) {
-        issues.push({ ...mapped, description: check.detail, selected: mapped.severity === 'high' });
-        existingIds.add(mapped.id);
-      }
+      existingIds.add('update_years');
     }
 
     if (surgicalResult.missingSections.length > 0 && !existingIds.has('add_missing_sections')) {
@@ -258,6 +245,18 @@ export async function POST(req: NextRequest) {
         severity: 'medium',
         selected: false,
       });
+      existingIds.add('add_missing_sections');
+    }
+
+    if (surgicalResult.keywordGaps.length > 0 && !existingIds.has('fix_keyword_density')) {
+      issues.push({
+        id: 'fix_keyword_density',
+        label: `Add ${surgicalResult.keywordGaps.length} missing keyword${surgicalResult.keywordGaps.length > 1 ? 's' : ''}`,
+        description: surgicalResult.keywordGaps.slice(0, 3).join(', '),
+        severity: 'medium',
+        selected: false,
+      });
+      existingIds.add('fix_keyword_density');
     }
 
     if (gscQuickWins && gscQuickWins.length > 0 && !existingIds.has('optimize_gsc_keywords')) {
@@ -268,6 +267,7 @@ export async function POST(req: NextRequest) {
         severity: 'high',
         selected: true,
       });
+      existingIds.add('optimize_gsc_keywords');
     }
 
     const result: AnalyzeResult = {

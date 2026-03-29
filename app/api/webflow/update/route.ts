@@ -39,15 +39,23 @@ export async function POST(req: NextRequest) {
     }
 
     // UPDATE path: item_id provided
-    const success = await updateBlogContent(item_id, {
-      postBody: post_body,
-      metaTitle: meta_title,
-      metaDescription: meta_description,
-      excerpt,
-    });
+    console.log('[WEBFLOW] Pushing', post_body ? post_body.length : 0, 'chars to item', item_id);
+    let success: boolean;
+    try {
+      success = await updateBlogContent(item_id, {
+        postBody: post_body,
+        metaTitle: meta_title,
+        metaDescription: meta_description,
+        excerpt,
+      });
+    } catch (webflowErr) {
+      const webflowMsg = webflowErr instanceof Error ? webflowErr.message : String(webflowErr);
+      console.error('[webflow/update] Webflow API error:', webflowMsg);
+      return NextResponse.json({ error: `Webflow API error: ${webflowMsg}` }, { status: 502 });
+    }
 
     if (!success) {
-      return NextResponse.json({ error: 'Failed to update Webflow item' }, { status: 500 });
+      return NextResponse.json({ error: 'Failed to update Webflow item — check API token and collection ID' }, { status: 500 });
     }
 
     return NextResponse.json({ success: true, itemId: item_id });

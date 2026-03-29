@@ -147,13 +147,12 @@ export interface UpdateChange {
 }
 
 export interface BlogUpdateAnalysis {
-  currentScore: SEOScore;
   contentIssues: {
     outdatedFacts: { quote: string; issue: string; suggestedFix: string }[];
     yearReferences: { quote: string; oldYear: number; context: string }[];
     brokenClaims: { quote: string; issue: string }[];
   };
-  seoIssues: SEOScore;
+  seoIssues: string[];
   suggestedFixes: string[];
   missingSections: string[];
   keywordGaps: string[];

@@ -2,10 +2,9 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import DiffView from '../../components/DiffView';
-import SeoScoreDashboard from '../../components/SeoScoreDashboard';
 import { useToast } from '../../components/Toast';
-import { parseGSCData, findQuickWins } from '../../lib/gsc-parser';
-import type { SEOScore, BlogUpdateAnalysis, GSCKeyword, UpdateChange } from '../../lib/types';
+import { parseGSCData, parseGSCXlsx, findQuickWins } from '../../lib/gsc-parser';
+import type { BlogUpdateAnalysis, GSCKeyword, UpdateChange } from '../../lib/types';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -89,8 +88,6 @@ export default function UpdateBlogPage() {
   // Results
   const [updatedHtml, setUpdatedHtml] = useState('');
   const [changes, setChanges] = useState<UpdateChange[]>([]);
-  const [oldScore, setOldScore] = useState<SEOScore | null>(null);
-  const [newScore, setNewScore] = useState<SEOScore | null>(null);
 
   const completeRef = useRef(false);
 
@@ -112,15 +109,28 @@ export default function UpdateBlogPage() {
   // ── GSC helpers ──────────────────────────────────────────────────────────
 
   function parseGscFile(file: File) {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const csv = e.target?.result as string ?? '';
-      const parsed = parseGSCData(csv);
-      setGscKeywords(parsed);
-      if (parsed.length > 0) toast(`${parsed.length} GSC keywords loaded`, 'success');
-      else toast('Could not parse CSV — check format', 'warning');
-    };
-    reader.readAsText(file);
+    const isXlsx = file.name.toLowerCase().endsWith('.xlsx');
+    if (isXlsx) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const buffer = e.target?.result as ArrayBuffer;
+        const parsed = parseGSCXlsx(buffer);
+        setGscKeywords(parsed);
+        if (parsed.length > 0) toast(`${parsed.length} GSC keywords loaded`, 'success');
+        else toast('Could not parse XLSX — check format', 'warning');
+      };
+      reader.readAsArrayBuffer(file);
+    } else {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const csv = e.target?.result as string ?? '';
+        const parsed = parseGSCData(csv);
+        setGscKeywords(parsed);
+        if (parsed.length > 0) toast(`${parsed.length} GSC keywords loaded`, 'success');
+        else toast('Could not parse CSV — check format', 'warning');
+      };
+      reader.readAsText(file);
+    }
   }
 
   function handleGscDrop(e: React.DragEvent) {
@@ -170,8 +180,6 @@ export default function UpdateBlogPage() {
     setIssues([]);
     setUpdatedHtml('');
     setChanges([]);
-    setOldScore(null);
-    setNewScore(null);
 
     try {
       const res = await fetch('/api/update/analyze', {
@@ -185,7 +193,6 @@ export default function UpdateBlogPage() {
       }
       const data = await res.json() as AnalyzeResult;
       setAnalysis(data);
-      setOldScore(data.analysis?.currentScore ?? null);
       setIssues(data.issues ?? []);
       setAnalysisState('suggestions');
       toast('Analysis complete', 'success');
@@ -218,6 +225,7 @@ export default function UpdateBlogPage() {
           webflow_item_id: analysis.webflowItemId,
           selectedFixes: selected,
           keyword: primaryKeyword.trim() || analysis.sourceUrl || 'blog',
+          blogTitle: analysis.metaTitle || selectedBlog?.title,
           gsc_keywords: gscKeywords.length > 0 ? gscKeywords : undefined,
           analysis: analysis.analysis,
           metaTitle: analysis.metaTitle,
@@ -257,10 +265,9 @@ export default function UpdateBlogPage() {
               setProgressLog((p) => [...p, `⚠ ${ev.id}: ${ev.message}`]);
               toast(`Fix "${ev.id}" failed — continuing`, 'warning');
             } else if (eventName === 'complete') {
-              const ev = parsed as { updatedHtml: string; score: SEOScore; changes_made?: UpdateChange[] };
+              const ev = parsed as { updatedHtml: string; changes_made?: UpdateChange[] };
               completeRef.current = true;
               setUpdatedHtml(ev.updatedHtml);
-              setNewScore(ev.score);
               setChanges(ev.changes_made ?? []);
               setAnalysisState('complete');
               toast('Blog updated successfully!', 'success');
@@ -330,8 +337,6 @@ export default function UpdateBlogPage() {
     setIssues([]);
     setUpdatedHtml('');
     setChanges([]);
-    setOldScore(null);
-    setNewScore(null);
     setErrorMsg('');
     setProgressLog([]);
     setUpdateStatus(null);
@@ -522,7 +527,7 @@ export default function UpdateBlogPage() {
                 {gscOpen && (
                   <div className="px-4 pb-4 pt-1 border-t border-gray-100 space-y-3">
                     <p className="text-xs text-gray-500">
-                      Upload a Google Search Console CSV for keyword recommendations.
+                      Upload GSC Data (.csv or .xlsx) for keyword recommendations.
                     </p>
 
                     {/* Drag-drop zone */}
@@ -538,12 +543,12 @@ export default function UpdateBlogPage() {
                       }}
                     >
                       <span className="text-xl">📁</span>
-                      <span className="text-xs text-gray-500">Drop CSV here or click to browse</span>
+                      <span className="text-xs text-gray-500">Drop .csv or .xlsx here or click to browse</span>
                     </div>
                     <input
                       ref={gscInputRef}
                       type="file"
-                      accept=".csv,.tsv,.txt"
+                      accept=".csv,.xlsx,.tsv,.txt"
                       className="hidden"
                       onChange={handleGscFile}
                     />
@@ -610,9 +615,6 @@ export default function UpdateBlogPage() {
           {/* ── SUGGESTIONS ── */}
           {(analysisState === 'suggestions' || analysisState === 'complete') && analysis && (
             <div className="space-y-4">
-              {/* Score */}
-              {oldScore && <SeoScoreDashboard score={oldScore} />}
-
               {/* Webflow badge */}
               {analysis.webflowItemId && (
                 <div className="flex items-center gap-2 text-xs text-purple-700 bg-purple-50 border border-purple-200 rounded-xl px-3 py-2">
@@ -638,7 +640,7 @@ export default function UpdateBlogPage() {
               {/* Issues */}
               <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
                 <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-                  <p className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Issues Found</p>
+                  <p className="text-xs font-semibold text-gray-700 uppercase tracking-wide">Optimization Opportunities</p>
                   <div className="flex gap-2 text-xs">
                     <button onClick={selectAll} style={{ color: '#6C5CE7' }}>All</button>
                     <span className="text-gray-300">|</span>
@@ -695,6 +697,24 @@ export default function UpdateBlogPage() {
                 </button>
               )}
 
+              {analysisState === 'complete' && changes.length > 0 && (
+                <div className="bg-green-50 border border-green-200 rounded-xl px-4 py-3">
+                  <p className="text-xs font-semibold text-green-800 mb-2">
+                    ✅ {changes.length} fix{changes.length > 1 ? 'es' : ''} applied
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {changes.map((c, i) => (
+                      <span
+                        key={i}
+                        className="px-2.5 py-1 rounded-full text-[11px] font-medium bg-white border border-green-200 text-green-800"
+                      >
+                        {c.description}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {analysisState === 'complete' && (
                 <button onClick={handleReset} className="w-full py-2 text-xs border border-gray-200 rounded-xl text-gray-500 hover:bg-gray-50">
                   ← Update Another Blog
@@ -747,29 +767,6 @@ export default function UpdateBlogPage() {
       {/* ── RIGHT PANEL (60%) ───────────────────────────────────────────── */}
       <div className="flex-1 flex flex-col h-screen overflow-hidden">
 
-        {/* Score comparison bar */}
-        {analysisState === 'complete' && oldScore && newScore && (
-          <div className="shrink-0 border-b border-gray-200 bg-white px-5 py-3 flex items-center gap-6">
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-gray-500">Before</span>
-              <span className="text-lg font-bold" style={{ color: oldScore.overall >= 70 ? '#22C55E' : oldScore.overall >= 50 ? '#F59E0B' : '#EF4444' }}>
-                {oldScore.overall}%
-              </span>
-            </div>
-            <span className="text-gray-300">→</span>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-gray-500">After</span>
-              <span className="text-lg font-bold" style={{ color: newScore.overall >= 70 ? '#22C55E' : newScore.overall >= 50 ? '#F59E0B' : '#EF4444' }}>
-                {newScore.overall}%
-              </span>
-              {newScore.overall > oldScore.overall && (
-                <span className="text-xs font-bold" style={{ color: '#22C55E' }}>
-                  +{newScore.overall - oldScore.overall}%
-                </span>
-              )}
-            </div>
-          </div>
-        )}
 
         {/* Main content */}
         <div className="flex-1 overflow-hidden">

@@ -1,6 +1,5 @@
 import { NextRequest } from 'next/server';
 import { callClaude } from '../../../../lib/claude';
-import { scoreContent } from '../../../../lib/seo/content-scorer';
 import { injectInternalLinks } from '../../../../lib/links/internal-linker';
 import type { BlogUpdateAnalysis, GSCKeyword, UpdateChange } from '../../../../lib/types';
 
@@ -11,6 +10,7 @@ interface ApplyRequest {
   webflow_item_id?: string;
   selectedFixes: string[];
   keyword: string;
+  blogTitle?: string;
   gsc_keywords?: GSCKeyword[];
   analysis?: BlogUpdateAnalysis;
   metaTitle?: string;
@@ -89,7 +89,10 @@ async function updateYears(html: string, changes: UpdateChange[]): Promise<strin
   let count = 0;
 
   for (const year of pastYears) {
-    const re = new RegExp(`(?<![/\\w])${year}(?![/\\w])`, 'g');
+    // Only replace years in visible text — avoid years inside href/src/data- attributes
+    // Strategy: replace only when year is followed by visible text context (before a closing tag or space)
+    // and not inside an attribute value (preceded by a quote or = sign)
+    const re = new RegExp(`(?<!["'=/\\w])\\b${year}\\b(?![^<]*?>)(?=[^"]*?(?:<|$))`, 'g');
     const before = result;
     result = result.replace(re, String(CURRENT_YEAR));
     if (result !== before) count++;
@@ -272,10 +275,23 @@ async function addMissingSections(
   return result;
 }
 
-async function addFaq(html: string, keyword: string, changes: UpdateChange[]): Promise<string> {
+async function addFaq(
+  html: string,
+  keyword: string,
+  changes: UpdateChange[],
+  blogTitle?: string
+): Promise<string> {
+  const topic = blogTitle || keyword;
+  // Extract a short content excerpt for context
+  const textSnippet = html
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 800);
+
   const faqHtml = await callClaude(
-    'You are an SEO content writer. Generate a FAQ section for a blog post. Return ONLY the HTML fragment. No markdown.',
-    `Generate a FAQ section with 4-5 questions and answers for a blog post about "${keyword}". Format: <h2>Frequently Asked Questions</h2><h3>Question?</h3><p>Answer.</p> (repeat)`,
+    'You are an SEO content writer. Generate a FAQ section based on a specific blog post. Return ONLY the HTML fragment. No markdown.',
+    `Generate 4-5 FAQ questions and answers specifically about "${topic}" based on this blog content excerpt. Questions must be things a reader of THIS blog would actually ask. No generic blogging questions.\n\nBlog content excerpt:\n${textSnippet}\n\nFormat: <h2>Frequently Asked Questions</h2><h3>Question?</h3><p>Answer.</p> (repeat for each Q&A)`,
     1024
   );
   const cleanFaq = faqHtml.replace(/^```(?:html)?\s*/i, '').replace(/```\s*$/, '').trim();
@@ -366,6 +382,7 @@ export async function POST(req: NextRequest) {
     webflow_item_id,
     selectedFixes,
     keyword,
+    blogTitle,
     gsc_keywords,
     analysis,
     metaTitle,
@@ -431,7 +448,7 @@ export async function POST(req: NextRequest) {
                 workingHtml = await fixParagraphLength(workingHtml, changes);
                 break;
               case 'add_faq':
-                workingHtml = await addFaq(workingHtml, keyword, changes);
+                workingHtml = await addFaq(workingHtml, keyword, changes, blogTitle || metaTitle);
                 break;
               case 'optimize_gsc_keywords':
                 if (gsc_keywords) workingHtml = await optimizeGscKeywords(workingHtml, gsc_keywords, changes);
@@ -446,23 +463,26 @@ export async function POST(req: NextRequest) {
           send('status', { message: label.replace('…', ' ✓'), total: fixes.length, done: i + 1 });
         }
 
-        // Re-score
-        send('status', { message: 'Scoring updated content…', total: fixes.length, done: fixes.length });
-        const newScore = scoreContent(
-          workingHtml,
-          {
-            primaryKeyword: keyword || 'blog',
-            secondaryKeywords: [],
-            longTailKeywords: [],
-            peopleAlsoAsk: [],
-            keywordGroups: {},
-          },
-          { title: metaTitle || '', description: metaDescription || '', slug: '' }
-        );
+        // Sanity check: updated HTML should not be shorter than 90% of original
+        const origLen = originalHtml.length;
+        const updatedLen = workingHtml.length;
+        if (updatedLen < origLen * 0.9) {
+          console.warn(`[update/apply] Sanity check failed: updated (${updatedLen}) < 90% of original (${origLen}). Reverting.`);
+          workingHtml = originalHtml;
+          send('fix_error', { id: 'sanity_check', message: 'Updated content was too short — reverted to original. Try fewer fixes.' });
+        }
+
+        // Count h2 tags: should not decrease
+        const origH2 = (originalHtml.match(/<h2/gi) || []).length;
+        const updatedH2 = (workingHtml.match(/<h2/gi) || []).length;
+        if (origH2 > 0 && updatedH2 < origH2) {
+          console.warn(`[update/apply] H2 count dropped from ${origH2} to ${updatedH2}. Reverting.`);
+          workingHtml = originalHtml;
+          send('fix_error', { id: 'sanity_check', message: 'Updated content lost headings — reverted to original.' });
+        }
 
         send('complete', {
           updatedHtml: workingHtml,
-          score: newScore,
           changes_made: changes,
           webflow_ready: !!webflow_item_id,
           webflow_item_id,

@@ -1,4 +1,5 @@
 import type { GSCKeyword } from './types';
+import * as XLSX from 'xlsx';
 
 function stripHtml(html: string): string {
   return html
@@ -62,6 +63,49 @@ export function parseGSCData(csvContent: string): GSCKeyword[] {
     }
 
     // Sort by impressions desc, return top 50
+    results.sort((a, b) => b.impressions - a.impressions);
+    return results.slice(0, 50);
+  } catch {
+    return [];
+  }
+}
+
+/** Parse a GSC XLSX file from an ArrayBuffer */
+export function parseGSCXlsx(buffer: ArrayBuffer): GSCKeyword[] {
+  try {
+    const workbook = XLSX.read(buffer, { type: 'array' });
+    const sheetName = workbook.SheetNames[0];
+    if (!sheetName) return [];
+    const sheet = workbook.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' });
+
+    const results: GSCKeyword[] = [];
+    for (const row of rows) {
+      // Normalize headers to lowercase
+      const normalized: Record<string, unknown> = {};
+      for (const key of Object.keys(row)) {
+        normalized[key.toLowerCase().trim()] = row[key];
+      }
+
+      const query =
+        String(normalized['query'] ?? normalized['top queries'] ?? normalized['queries'] ?? '').trim();
+      if (!query) continue;
+
+      const clicks = parseInt(String(normalized['clicks'] ?? '0'), 10) || 0;
+      const impressions = parseInt(String(normalized['impressions'] ?? '0'), 10) || 0;
+
+      let ctr = 0;
+      const rawCtr = String(normalized['ctr'] ?? '').replace('%', '').trim();
+      if (rawCtr) {
+        ctr = parseFloat(rawCtr) || 0;
+        if (ctr > 1) ctr = ctr / 100;
+      }
+
+      const position = parseFloat(String(normalized['position'] ?? '0')) || 0;
+
+      results.push({ query, clicks, impressions, ctr, position });
+    }
+
     results.sort((a, b) => b.impressions - a.impressions);
     return results.slice(0, 50);
   } catch {
